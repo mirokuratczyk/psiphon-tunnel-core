@@ -6,7 +6,7 @@ set -x -e
 
 # This script takes an optional second argument: 'private', if private plugins should
 # be used. It should be omitted if private plugins are not desired.
-if [[ $1 == "private" ]]; then
+if [[ $2 == "private" ]]; then
   FORCE_PRIVATE_PLUGINS=true
   echo "TRUE"
 else
@@ -118,6 +118,7 @@ build_for_ios () {
   rm -rf "${IOS_BUILD_DIR}"
 
   echo "...Getting project dependencies (via go get) for iOS."
+  cd ${BASE_DIR}
   GOOS=darwin go get -d -v -tags "$IOS_BUILD_TAGS" ./...
   prepare_build "$IOS_BUILD_TAGS"
   if [ $? != 0 ]; then
@@ -149,6 +150,7 @@ build_for_macos () {
   rm -rf "${MACOS_BUILD_DIR}"
 
   echo "...Getting project dependencies (via go get) for MacOS"
+  cd ${BASE_DIR}
   GOOS=darwin go get -d -v -tags "$MACOS_BUILD_TAGS" ./...
   prepare_build "$MACOS_BUILD_TAGS"
   if [ $? != 0 ]; then
