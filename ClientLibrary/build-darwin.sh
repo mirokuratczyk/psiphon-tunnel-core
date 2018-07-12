@@ -122,8 +122,8 @@ build_for_ios () {
   GOOS=darwin go get -d -v -tags "$IOS_BUILD_TAGS" ./...
   prepare_build "$IOS_BUILD_TAGS"
   if [ $? != 0 ]; then
-      echo "....'go get' failed, exiting"
-      exit $?
+    echo "....'go get' failed, exiting"
+    exit $?
   fi
 
   curl https://raw.githubusercontent.com/golang/go/master/misc/ios/clangwrap.sh -o ${TEMP_DIR}/clangwrap.sh
@@ -154,8 +154,8 @@ build_for_macos () {
   GOOS=darwin go get -d -v -tags "$MACOS_BUILD_TAGS" ./...
   prepare_build "$MACOS_BUILD_TAGS"
   if [ $? != 0 ]; then
-      echo "....'go get' failed, exiting"
-      exit $?
+    echo "....'go get' failed, exiting"
+    exit $?
   fi
 
   TARGET_ARCH=386

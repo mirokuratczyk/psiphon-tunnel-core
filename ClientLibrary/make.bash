@@ -79,8 +79,8 @@ build_for_android () {
   GOOS=windows go get -d -v -tags "$ANDROID_BUILD_TAGS" ./...
   prepare_build "$ANDROID_BUILD_TAGS"
   if [ $? != 0 ]; then
-      echo "....'go get' failed, exiting"
-      exit $?
+    echo "....'go get' failed, exiting"
+    exit $?
   fi
 
   TARGET_NDK=android-ndk-r17b
@@ -113,15 +113,15 @@ build_for_android () {
 build_for_linux () {
 
 	TARGET_OS=linux
-    OUTPUT_DIR="${BUILD_DIR}/${TARGET_OS}"
+  OUTPUT_DIR="${BUILD_DIR}/${TARGET_OS}"
 
-    echo "...Getting project dependencies (via go get) for Linux."
-    GOOS=linux go get -d -v -tags "$LINUX_BUILD_TAGS" ./...
-    prepare_build "$LINUX_BUILD_TAGS"
-    if [ $? != 0 ]; then
-        echo "....'go get' failed, exiting"
-        exit $?
-    fi
+  echo "...Getting project dependencies (via go get) for Linux."
+  GOOS=linux go get -d -v -tags "$LINUX_BUILD_TAGS" ./...
+  prepare_build "$LINUX_BUILD_TAGS"
+  if [ $? != 0 ]; then
+    echo "....'go get' failed, exiting"
+    exit $?
+  fi
 
 	TARGET_ARCH=386
 	# TODO: is "CFLAGS=-m32" required?
@@ -144,22 +144,22 @@ build_for_windows () {
   GOOS=windows go get -d -v -tags "$WINDOWS_BUILD_TAGS" ./...
   prepare_build "$WINDOWS_BUILD_TAGS"
   if [ $? != 0 ]; then
-      echo "....'go get' failed, exiting"
-      exit $?
+    echo "....'go get' failed, exiting"
+    exit $?
   fi
 
   TARGET_ARCH=386
 
   CGO_ENABLED=1 \
-    CGO_LDFLAGS="-L /usr/i686-w64-mingw32/lib/ -lwsock32 -lcrypt32 -lgdi32" \
-    CC=/usr/bin/i686-w64-mingw32-gcc \
+  CGO_LDFLAGS="-L /usr/i686-w64-mingw32/lib/ -lwsock32 -lcrypt32 -lgdi32" \
+  CC=/usr/bin/i686-w64-mingw32-gcc \
   GOOS=${TARGET_OS} GOARCH=${TARGET_ARCH} go build -buildmode=c-shared -ldflags "$LDFLAGS" -tags "$WINDOWS_BUILD_TAGS" -o "${OUTPUT_DIR}/PsiphonTunnel-${TARGET_OS}-${TARGET_ARCH}.dll" PsiphonTunnel.go
 
   TARGET_ARCH=amd64
 
   CGO_ENABLED=1 \
-    CGO_LDFLAGS="-L /usr/x86_64-w64-mingw32/lib/ -lwsock32 -lcrypt32 -lgdi32" \
-    CC=/usr/bin/x86_64-w64-mingw32-gcc \
+  CGO_LDFLAGS="-L /usr/x86_64-w64-mingw32/lib/ -lwsock32 -lcrypt32 -lgdi32" \
+  CC=/usr/bin/x86_64-w64-mingw32-gcc \
   GOOS=${TARGET_OS} GOARCH=${TARGET_ARCH} go build -buildmode=c-shared -ldflags "$LDFLAGS" -tags "$WINDOWS_BUILD_TAGS" -o "${OUTPUT_DIR}/PsiphonTunnel-${TARGET_OS}-${TARGET_ARCH}.dll" PsiphonTunnel.go
 
 }
