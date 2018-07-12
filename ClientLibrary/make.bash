@@ -116,7 +116,7 @@ build_for_linux () {
     OUTPUT_DIR="${BUILD_DIR}/${TARGET_OS}"
 
     echo "...Getting project dependencies (via go get) for Linux."
-    GOOS=windows go get -d -v -tags "$LINUX_BUILD_TAGS" ./...
+    GOOS=linux go get -d -v -tags "$LINUX_BUILD_TAGS" ./...
     prepare_build "$LINUX_BUILD_TAGS"
     if [ $? != 0 ]; then
         echo "....'go get' failed, exiting"
