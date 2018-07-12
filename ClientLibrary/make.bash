@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# -x echos commands. -u exits if an unintialized variable is used.
+# -x echos commands.
 # -e exits if a command returns an error.
 set -x -e
 
@@ -18,8 +18,6 @@ else
   FORCE_PRIVATE_PLUGINS=false
   echo "FALSE"
 fi
-
-EXE_BASENAME="psiphon-tunnel-core"
 
 # BUILD_TAGS needs to be outside of prepare_build because it determines what's fetched by go-get.
 
@@ -39,7 +37,6 @@ fi
 
 prepare_build () {
 
-  BUILDINFOFILE="${EXE_BASENAME}_buildinfo.txt"
   BUILDDATE=$(date --iso-8601=seconds)
   BUILDREPO=$(git config --get remote.origin.url)
   BUILDREV=$(git rev-parse --short HEAD)
@@ -61,7 +58,6 @@ prepare_build () {
   -X github.com/Psiphon-Labs/psiphon-tunnel-core/psiphon/common.goVersion=$GOVERSION \
   -X github.com/Psiphon-Labs/psiphon-tunnel-core/psiphon/common.dependencies=$DEPENDENCIES \
   "
-  echo -e "${BUILDDATE}\n${BUILDREPO}\n${BUILDREV}\n" > $BUILDINFOFILE
 
   echo "Variables for ldflags:"
   echo " Build date: ${BUILDDATE}"
@@ -74,34 +70,45 @@ prepare_build () {
 }
 
 
-build_for_windows () {
+build_for_android () {
 
-    TARGET_OS=windows
-    OUTPUT_DIR="${BUILD_DIR}/${TARGET_OS}"
+  TARGET_OS=android
+  OUTPUT_DIR="${BUILD_DIR}/${TARGET_OS}"
 
-    echo "...Getting project dependencies (via go get) for Windows."
-    GOOS=windows go get -d -v -tags "$WINDOWS_BUILD_TAGS" ./...
-    prepare_build "$WINDOWS_BUILD_TAGS"
-    if [ $? != 0 ]; then
-        echo "....'go get' failed, exiting"
-        exit $?
-    fi
+  echo "...Getting project dependencies (via go get) for Android."
+  GOOS=windows go get -d -v -tags "$ANDROID_BUILD_TAGS" ./...
+  prepare_build "$ANDROID_BUILD_TAGS"
+  if [ $? != 0 ]; then
+      echo "....'go get' failed, exiting"
+      exit $?
+  fi
 
-	TARGET_ARCH=386
+  TARGET_NDK=android-ndk-r17b
+  curl http://dl.google.com/android/repository/${TARGET_NDK}-linux-x86_64.zip -o ~/android-ndk.zip
+  unzip ~/android-ndk.zip -d ~/
 
-	CGO_ENABLED=1 \
-    CGO_LDFLAGS="-L /usr/i686-w64-mingw32/lib/ -lwsock32 -lcrypt32 -lgdi32" \
-    CC=/usr/bin/i686-w64-mingw32-gcc \
-	GOOS=${TARGET_OS} GOARCH=${TARGET_ARCH} go build -buildmode=c-shared -ldflags "$LDFLAGS" -tags "$WINDOWS_BUILD_TAGS" -o "${OUTPUT_DIR}/PsiphonTunnel-${TARGET_OS}-${TARGET_ARCH}.dll" PsiphonTunnel.go
+  NDK_TOOLCHAIN_DIR=~/android-ndk-toolchain
+  mkdir -p ${NDK_TOOLCHAIN_DIR}
 
-	TARGET_ARCH=amd64
+  TARGET_ARCH=arm
+  ARMV=7
+  ~/${TARGET_NDK}/build/tools/make_standalone_toolchain.py --arch "${TARGET_ARCH}" --install-dir "${NDK_TOOLCHAIN_DIR}/${TARGET_ARCH}"
 
-	CGO_ENABLED=1 \
-    CGO_LDFLAGS="-L /usr/x86_64-w64-mingw32/lib/ -lwsock32 -lcrypt32 -lgdi32" \
-    CC=/usr/bin/x86_64-w64-mingw32-gcc \
-	GOOS=${TARGET_OS} GOARCH=${TARGET_ARCH} go build -buildmode=c-shared -ldflags "$LDFLAGS" -tags "$WINDOWS_BUILD_TAGS" -o "${OUTPUT_DIR}/PsiphonTunnel-${TARGET_OS}-${TARGET_ARCH}.dll" PsiphonTunnel.go
+  CC="${NDK_TOOLCHAIN_DIR}/${TARGET_ARCH}/bin/arm-linux-androideabi-clang" \
+  CXX="${NDK_TOOLCHAIN_DIR}/${TARGET_ARCH}/bin/arm-linux-androideabi-clang++" \
+  GOARM=${ARMV} \
+  GOOS=${TARGET_OS} GOARCH=${TARGET_ARCH} go build -buildmode=c-shared -ldflags "$LDFLAGS" -tags "$ANDROID_BUILD_TAGS" -o "${OUTPUT_DIR}/PsiphonTunnel-${TARGET_OS}-${TARGET_ARCH}${ARMV}.so" PsiphonTunnel.go
+
+
+  TARGET_ARCH=arm64
+  ~/${TARGET_NDK}/build/tools/make_standalone_toolchain.py --arch "${TARGET_ARCH}" --install-dir "${NDK_TOOLCHAIN_DIR}/${TARGET_ARCH}"
+
+  CC="${NDK_TOOLCHAIN_DIR}/${TARGET_ARCH}/bin/aarch64-linux-android-clang" \
+  CXX="${NDK_TOOLCHAIN_DIR}/${TARGET_ARCH}/bin/aarch64-linux-android-clang++" \
+  GOOS=${TARGET_OS} GOARCH=${TARGET_ARCH} go build -buildmode=c-shared -ldflags "$LDFLAGS" -tags "$ANDROID_BUILD_TAGS" -o "${OUTPUT_DIR}/PsiphonTunnel-${TARGET_OS}-${TARGET_ARCH}.so" PsiphonTunnel.go
 
 }
+
 
 build_for_linux () {
 
@@ -117,66 +124,60 @@ build_for_linux () {
     fi
 
 	TARGET_ARCH=386
-
 	# TODO: is "CFLAGS=-m32" required?
 	CFLAGS=-m32 \
-	GOOS=${TARGET_OS} GOARCH=${TARGET_ARCH} go build -buildmode=c-shared -ldflags "$LDFLAGS" -tags "$LINUX_BUILD_TAGS" -o "${OUTPUT_DIR}/PsiphonTunnel-${TARGET_OS}-${TARGET_ARCH}.dylib" PsiphonTunnel.go
+	GOOS=${TARGET_OS} GOARCH=${TARGET_ARCH} go build -buildmode=c-shared -ldflags "$LDFLAGS" -tags "$LINUX_BUILD_TAGS" -o "${OUTPUT_DIR}/PsiphonTunnel-${TARGET_OS}-${TARGET_ARCH}.so" PsiphonTunnel.go
 
 
 	TARGET_ARCH=amd64
-
-	GOOS=linux GOARCH=${TARGET_ARCH} go build -buildmode=c-shared -ldflags "$LDFLAGS" -tags "$LINUX_BUILD_TAGS" -o "${OUTPUT_DIR}/PsiphonTunnel-${TARGET_OS}-${TARGET_ARCH}.dylib" PsiphonTunnel.go
-}
-
-build_for_macos () {
-
-    echo "To build for macos please use build-darwin.sh"
-	
-}
-
-build_for_android () {
-
-	TARGET_OS=android
-    OUTPUT_DIR="${BUILD_DIR}/${TARGET_OS}"
-
-    echo "...Getting project dependencies (via go get) for Android."
-    GOOS=windows go get -d -v -tags "$ANDROID_BUILD_TAGS" ./...
-    prepare_build "$ANDROID_BUILD_TAGS"
-    if [ $? != 0 ]; then
-        echo "....'go get' failed, exiting"
-        exit $?
-    fi
-
-    TARGET_NDK=android-ndk-r17b
-	curl http://dl.google.com/android/repository/${TARGET_NDK}-linux-x86_64.zip -o ~/android-ndk.zip
-	unzip ~/android-ndk.zip -d ~/
-
-	TARGET_ARCH=arm
-	ARMV=7
-
-	~/${TARGET_NDK}/build/tools/make_standalone_toolchain.py --arch arm --install-dir ~/arm
-
-	CC=~/arm/bin/arm-linux-androideabi-clang \
-	CXX=~/arm/bin/arm-linux-androideabi-clang++ \
-	GOARM=${ARMV} \
-	GOOS=${TARGET_OS} GOARCH=${TARGET_ARCH} go build -buildmode=c-shared -ldflags "$LDFLAGS" -tags "$ANDROID_BUILD_TAGS" -o "${OUTPUT_DIR}/PsiphonTunnel-${TARGET_OS}-${TARGET_ARCH}${ARMV}.dylib" PsiphonTunnel.go
-
-
-	TARGET_ARCH=arm64
-
-	~/${TARGET_NDK}/build/tools/make_standalone_toolchain.py --arch arm64 --install-dir ~/arm64
-
-	CC=~/arm64/bin/aarch64-linux-android-clang \
-	CXX=~/arm64/bin/aarch64-linux-android-clang++ \
-	GOOS=${TARGET_OS} GOARCH=${TARGET_ARCH} go build -buildmode=c-shared -ldflags "$LDFLAGS" -tags "$ANDROID_BUILD_TAGS" -o "${OUTPUT_DIR}/PsiphonTunnel-${TARGET_OS}-${TARGET_ARCH}.dylib" PsiphonTunnel.go
+	GOOS=linux GOARCH=${TARGET_ARCH} go build -buildmode=c-shared -ldflags "$LDFLAGS" -tags "$LINUX_BUILD_TAGS" -o "${OUTPUT_DIR}/PsiphonTunnel-${TARGET_OS}-${TARGET_ARCH}.so" PsiphonTunnel.go
 
 }
+
+
+build_for_windows () {
+
+  TARGET_OS=windows
+  OUTPUT_DIR="${BUILD_DIR}/${TARGET_OS}"
+
+  echo "...Getting project dependencies (via go get) for Windows."
+  GOOS=windows go get -d -v -tags "$WINDOWS_BUILD_TAGS" ./...
+  prepare_build "$WINDOWS_BUILD_TAGS"
+  if [ $? != 0 ]; then
+      echo "....'go get' failed, exiting"
+      exit $?
+  fi
+
+  TARGET_ARCH=386
+
+  CGO_ENABLED=1 \
+    CGO_LDFLAGS="-L /usr/i686-w64-mingw32/lib/ -lwsock32 -lcrypt32 -lgdi32" \
+    CC=/usr/bin/i686-w64-mingw32-gcc \
+  GOOS=${TARGET_OS} GOARCH=${TARGET_ARCH} go build -buildmode=c-shared -ldflags "$LDFLAGS" -tags "$WINDOWS_BUILD_TAGS" -o "${OUTPUT_DIR}/PsiphonTunnel-${TARGET_OS}-${TARGET_ARCH}.dll" PsiphonTunnel.go
+
+  TARGET_ARCH=amd64
+
+  CGO_ENABLED=1 \
+    CGO_LDFLAGS="-L /usr/x86_64-w64-mingw32/lib/ -lwsock32 -lcrypt32 -lgdi32" \
+    CC=/usr/bin/x86_64-w64-mingw32-gcc \
+  GOOS=${TARGET_OS} GOARCH=${TARGET_ARCH} go build -buildmode=c-shared -ldflags "$LDFLAGS" -tags "$WINDOWS_BUILD_TAGS" -o "${OUTPUT_DIR}/PsiphonTunnel-${TARGET_OS}-${TARGET_ARCH}.dll" PsiphonTunnel.go
+
+}
+
 
 build_for_ios () {
 
-    echo "To build for iOS please use build-darwin.sh"
+  echo "To build for iOS please use build-darwin.sh"
 
 }
+
+
+build_for_macos () {
+
+  echo "To build for macos please use build-darwin.sh"
+
+}
+
 
 TARGET=$1
 case $TARGET in
@@ -193,7 +194,7 @@ case $TARGET in
 
     ;;
   macos)
-    echo "..Building for MACOS"
+    echo "..Building for MacOS"
     build_for_macos
     exit $?
 
