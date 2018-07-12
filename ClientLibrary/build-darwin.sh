@@ -148,7 +148,7 @@ build_for_macos () {
   MACOS_BUILD_DIR="${BUILD_DIR}/macos"
   rm -rf "${MACOS_BUILD_DIR}"
 
-  echo "...Getting project dependencies (via go get) for iOS."
+  echo "...Getting project dependencies (via go get) for MacOS"
   GOOS=darwin go get -d -v -tags "$MACOS_BUILD_TAGS" ./...
   prepare_build "$MACOS_BUILD_TAGS"
   if [ $? != 0 ]; then
