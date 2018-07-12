@@ -84,7 +84,7 @@ build_for_android () {
   fi
 
   TARGET_NDK=android-ndk-r17b
-  curl http://dl.google.com/android/repository/${TARGET_NDK}-linux-x86_64.zip -o ~/android-ndk.zip
+  curl https://dl.google.com/android/repository/${TARGET_NDK}-linux-x86_64.zip -o ~/android-ndk.zip
   unzip ~/android-ndk.zip -d ~/
 
   NDK_TOOLCHAIN_DIR=~/android-ndk-toolchain
