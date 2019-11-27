@@ -25,6 +25,16 @@ char *read_file(char *filename) {
     return buffer;
 }
 
+// Notice callback from PsiphonTunnel
+void notices_callback(char *s) {
+    printf("Notice: %s\n", s);
+}
+
+// Connected callback from PsiphonTunnel
+void connected_callback() {
+    printf("Connected\n");
+}
+
 int main(int argc, char *argv[]) {
 
     // load config
@@ -70,7 +80,7 @@ int main(int argc, char *argv[]) {
     // connect 5 times
     for (int i = 0; i < 5; i++) {
         // start will return once Psiphon connects or does not connect for timeout seconds
-        char *result = PsiphonTunnelStart(psiphon_config, server_list, &params);
+        char *result = PsiphonTunnelStart(psiphon_config, server_list, &params, notices_callback, connected_callback);
 
         // print results
         printf("Result: %s\n", result);

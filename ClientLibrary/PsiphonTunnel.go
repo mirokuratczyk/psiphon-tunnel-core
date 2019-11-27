@@ -23,6 +23,21 @@ package main
 #include <stdlib.h>
 #include <stdint.h>
 
+typedef void (*connectedFunc) ();
+
+static void
+bridge_connected_func(connectedFunc f) {
+	f();
+}
+
+typedef void (*noticeFunc) (char *s);
+
+static void
+bridge_notice_func(noticeFunc f, char *s)
+{
+	f(s);
+}
+
 // For descriptions of fields, see below.
 // Additional information can also be found in the Parameters structure in clientlib.go.
 struct Parameters {
@@ -160,7 +175,8 @@ var managedStartResult *C.char
 // establish an active tunnel indefinitely (or until PsiphonTunnelStop is called).
 // Timeout values >= 0 override the optional `EstablishTunnelTimeoutSeconds` config field;
 // null causes the config value to be used.
-func PsiphonTunnelStart(cConfigJSON, cEmbeddedServerEntryList *C.char, cParams *C.struct_Parameters) *C.char {
+func PsiphonTunnelStart(cConfigJSON, cEmbeddedServerEntryList *C.char, cParams *C.struct_Parameters, noticesCallback C.noticeFunc, connectedCallback C.connectedFunc) *C.char {
+
 	// Stop any active tunnels
 	PsiphonTunnelStop()
 
@@ -213,10 +229,21 @@ func PsiphonTunnelStart(cConfigJSON, cEmbeddedServerEntryList *C.char, cParams *
 
 	startTime := time.Now()
 
+	noticeReceiver := func(event clientlib.NoticeEvent) {
+		s := fmt.Sprintf("%v", event)
+		C.bridge_notice_func(noticesCallback, C.CString(s))
+		if event.Type == "Tunnels" {
+			count := event.Data["count"].(float64)
+			if count > 0 {
+				C.bridge_connected_func(connectedCallback)
+			}
+		}
+	}
+
 	// Start the tunnel connection
 	var err error
 	tunnel, err = clientlib.StartTunnel(
-		context.Background(), configJSON, embeddedServerEntryList, params, nil, nil)
+		context.Background(), configJSON, embeddedServerEntryList, params, nil, noticeReceiver)
 
 	if err != nil {
 		if err == clientlib.ErrTimeout {
