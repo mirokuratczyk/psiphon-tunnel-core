@@ -157,6 +157,15 @@ build_for_tvos () {
   CGO_CFLAGS="-isysroot$(xcrun --sdk appletvsimulator --show-sdk-path) -fembed-bitcode" \
   CGO_ENABLED=1 GOOS=darwin GOARCH=amd64 go build -buildmode=c-archive -ldflags "$LDFLAGS" -tags "${BUILD_TAGS} ios" -o ${TVOS_BUILD_DIR}/amd64/libpsiphontunnel.a PsiphonTunnel.go
 
+  # Add the simulator x86_64 binary into the main binary
+  lipo -create  ${TVOS_BUILD_DIR}/arm64/libpsiphontunnel.a ${TVOS_BUILD_DIR}/amd64/libpsiphontunnel.a -output ${TVOS_BUILD_DIR}/libpsiphontunnel.a
+  rc=$?; if [[ $rc != 0 ]]; then
+    echo "FAILURE: lipo create"
+    exit $rc
+  fi
+
+  cp ${TVOS_BUILD_DIR}/arm64/libpsiphontunnel.h ${TVOS_BUILD_DIR}/libpsiphontunnel.h
+
 }
 
 
