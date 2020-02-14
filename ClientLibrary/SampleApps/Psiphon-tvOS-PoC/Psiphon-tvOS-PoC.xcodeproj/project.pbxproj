@@ -1,0 +1,634 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 50;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		CE7ACD5F23F6E0B100E94520 /* util.c in Sources */ = {isa = PBXBuildFile; fileRef = CE7ACD5E23F6E0B100E94520 /* util.c */; };
+		CE7ACD6123F6E39000E94520 /* psiphon_config in Resources */ = {isa = PBXBuildFile; fileRef = CE7ACD6023F6E39000E94520 /* psiphon_config */; };
+		CEDB603D23F5D74C00EFEA56 /* AppDelegate.m in Sources */ = {isa = PBXBuildFile; fileRef = CEDB603C23F5D74C00EFEA56 /* AppDelegate.m */; };
+		CEDB604023F5D74C00EFEA56 /* ViewController.m in Sources */ = {isa = PBXBuildFile; fileRef = CEDB603F23F5D74C00EFEA56 /* ViewController.m */; };
+		CEDB604323F5D74C00EFEA56 /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = CEDB604123F5D74C00EFEA56 /* Main.storyboard */; };
+		CEDB604523F5D74D00EFEA56 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = CEDB604423F5D74D00EFEA56 /* Assets.xcassets */; };
+		CEDB604823F5D74D00EFEA56 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = CEDB604623F5D74D00EFEA56 /* LaunchScreen.storyboard */; };
+		CEDB604B23F5D74D00EFEA56 /* main.m in Sources */ = {isa = PBXBuildFile; fileRef = CEDB604A23F5D74D00EFEA56 /* main.m */; };
+		CEDB605523F5D74D00EFEA56 /* Psiphon_tvOS_PoCTests.m in Sources */ = {isa = PBXBuildFile; fileRef = CEDB605423F5D74D00EFEA56 /* Psiphon_tvOS_PoCTests.m */; };
+		CEDB606023F5D74E00EFEA56 /* Psiphon_tvOS_PoCUITests.m in Sources */ = {isa = PBXBuildFile; fileRef = CEDB605F23F5D74E00EFEA56 /* Psiphon_tvOS_PoCUITests.m */; };
+		CEDB607723F5EAF900EFEA56 /* libpsiphontunnel.a in Frameworks */ = {isa = PBXBuildFile; fileRef = CEDB607523F5EAF900EFEA56 /* libpsiphontunnel.a */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		CEDB605123F5D74D00EFEA56 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = CEDB603023F5D74C00EFEA56 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = CEDB603723F5D74C00EFEA56;
+			remoteInfo = "Psiphon-tvOS-PoC";
+		};
+		CEDB605C23F5D74E00EFEA56 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = CEDB603023F5D74C00EFEA56 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = CEDB603723F5D74C00EFEA56;
+			remoteInfo = "Psiphon-tvOS-PoC";
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		CEDB607423F5DF3B00EFEA56 /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		CE7ACD5D23F6E0A300E94520 /* util.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = util.h; sourceTree = "<group>"; };
+		CE7ACD5E23F6E0B100E94520 /* util.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = util.c; sourceTree = "<group>"; };
+		CE7ACD6023F6E39000E94520 /* psiphon_config */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text; path = psiphon_config; sourceTree = SOURCE_ROOT; };
+		CEDB603823F5D74C00EFEA56 /* Psiphon-tvOS-PoC.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Psiphon-tvOS-PoC.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		CEDB603B23F5D74C00EFEA56 /* AppDelegate.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = AppDelegate.h; sourceTree = "<group>"; };
+		CEDB603C23F5D74C00EFEA56 /* AppDelegate.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = AppDelegate.m; sourceTree = "<group>"; };
+		CEDB603E23F5D74C00EFEA56 /* ViewController.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ViewController.h; sourceTree = "<group>"; };
+		CEDB603F23F5D74C00EFEA56 /* ViewController.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = ViewController.m; sourceTree = "<group>"; };
+		CEDB604223F5D74C00EFEA56 /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/Main.storyboard; sourceTree = "<group>"; };
+		CEDB604423F5D74D00EFEA56 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		CEDB604723F5D74D00EFEA56 /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
+		CEDB604923F5D74D00EFEA56 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		CEDB604A23F5D74D00EFEA56 /* main.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = main.m; sourceTree = "<group>"; };
+		CEDB605023F5D74D00EFEA56 /* Psiphon-tvOS-PoCTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Psiphon-tvOS-PoCTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+		CEDB605423F5D74D00EFEA56 /* Psiphon_tvOS_PoCTests.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = Psiphon_tvOS_PoCTests.m; sourceTree = "<group>"; };
+		CEDB605623F5D74D00EFEA56 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		CEDB605B23F5D74E00EFEA56 /* Psiphon-tvOS-PoCUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Psiphon-tvOS-PoCUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+		CEDB605F23F5D74E00EFEA56 /* Psiphon_tvOS_PoCUITests.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = Psiphon_tvOS_PoCUITests.m; sourceTree = "<group>"; };
+		CEDB606123F5D74E00EFEA56 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		CEDB607523F5EAF900EFEA56 /* libpsiphontunnel.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libpsiphontunnel.a; sourceTree = SOURCE_ROOT; };
+		CEDB607623F5EAF900EFEA56 /* libpsiphontunnel.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = libpsiphontunnel.h; sourceTree = SOURCE_ROOT; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		CEDB603523F5D74C00EFEA56 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				CEDB607723F5EAF900EFEA56 /* libpsiphontunnel.a in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CEDB604D23F5D74D00EFEA56 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CEDB605823F5D74E00EFEA56 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		CEDB602F23F5D74C00EFEA56 = {
+			isa = PBXGroup;
+			children = (
+				CEDB603A23F5D74C00EFEA56 /* Psiphon-tvOS-PoC */,
+				CEDB605323F5D74D00EFEA56 /* Psiphon-tvOS-PoCTests */,
+				CEDB605E23F5D74E00EFEA56 /* Psiphon-tvOS-PoCUITests */,
+				CEDB603923F5D74C00EFEA56 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		CEDB603923F5D74C00EFEA56 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				CEDB603823F5D74C00EFEA56 /* Psiphon-tvOS-PoC.app */,
+				CEDB605023F5D74D00EFEA56 /* Psiphon-tvOS-PoCTests.xctest */,
+				CEDB605B23F5D74E00EFEA56 /* Psiphon-tvOS-PoCUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		CEDB603A23F5D74C00EFEA56 /* Psiphon-tvOS-PoC */ = {
+			isa = PBXGroup;
+			children = (
+				CE7ACD6023F6E39000E94520 /* psiphon_config */,
+				CEDB607523F5EAF900EFEA56 /* libpsiphontunnel.a */,
+				CEDB607623F5EAF900EFEA56 /* libpsiphontunnel.h */,
+				CEDB603B23F5D74C00EFEA56 /* AppDelegate.h */,
+				CE7ACD5D23F6E0A300E94520 /* util.h */,
+				CE7ACD5E23F6E0B100E94520 /* util.c */,
+				CEDB603C23F5D74C00EFEA56 /* AppDelegate.m */,
+				CEDB603E23F5D74C00EFEA56 /* ViewController.h */,
+				CEDB603F23F5D74C00EFEA56 /* ViewController.m */,
+				CEDB604123F5D74C00EFEA56 /* Main.storyboard */,
+				CEDB604423F5D74D00EFEA56 /* Assets.xcassets */,
+				CEDB604623F5D74D00EFEA56 /* LaunchScreen.storyboard */,
+				CEDB604923F5D74D00EFEA56 /* Info.plist */,
+				CEDB604A23F5D74D00EFEA56 /* main.m */,
+			);
+			path = "Psiphon-tvOS-PoC";
+			sourceTree = "<group>";
+		};
+		CEDB605323F5D74D00EFEA56 /* Psiphon-tvOS-PoCTests */ = {
+			isa = PBXGroup;
+			children = (
+				CEDB605423F5D74D00EFEA56 /* Psiphon_tvOS_PoCTests.m */,
+				CEDB605623F5D74D00EFEA56 /* Info.plist */,
+			);
+			path = "Psiphon-tvOS-PoCTests";
+			sourceTree = "<group>";
+		};
+		CEDB605E23F5D74E00EFEA56 /* Psiphon-tvOS-PoCUITests */ = {
+			isa = PBXGroup;
+			children = (
+				CEDB605F23F5D74E00EFEA56 /* Psiphon_tvOS_PoCUITests.m */,
+				CEDB606123F5D74E00EFEA56 /* Info.plist */,
+			);
+			path = "Psiphon-tvOS-PoCUITests";
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		CEDB603723F5D74C00EFEA56 /* Psiphon-tvOS-PoC */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = CEDB606423F5D74E00EFEA56 /* Build configuration list for PBXNativeTarget "Psiphon-tvOS-PoC" */;
+			buildPhases = (
+				CEDB603423F5D74C00EFEA56 /* Sources */,
+				CEDB603523F5D74C00EFEA56 /* Frameworks */,
+				CEDB603623F5D74C00EFEA56 /* Resources */,
+				CEDB607423F5DF3B00EFEA56 /* Embed Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "Psiphon-tvOS-PoC";
+			productName = "Psiphon-tvOS-PoC";
+			productReference = CEDB603823F5D74C00EFEA56 /* Psiphon-tvOS-PoC.app */;
+			productType = "com.apple.product-type.application";
+		};
+		CEDB604F23F5D74D00EFEA56 /* Psiphon-tvOS-PoCTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = CEDB606723F5D74E00EFEA56 /* Build configuration list for PBXNativeTarget "Psiphon-tvOS-PoCTests" */;
+			buildPhases = (
+				CEDB604C23F5D74D00EFEA56 /* Sources */,
+				CEDB604D23F5D74D00EFEA56 /* Frameworks */,
+				CEDB604E23F5D74D00EFEA56 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				CEDB605223F5D74D00EFEA56 /* PBXTargetDependency */,
+			);
+			name = "Psiphon-tvOS-PoCTests";
+			productName = "Psiphon-tvOS-PoCTests";
+			productReference = CEDB605023F5D74D00EFEA56 /* Psiphon-tvOS-PoCTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		CEDB605A23F5D74E00EFEA56 /* Psiphon-tvOS-PoCUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = CEDB606A23F5D74E00EFEA56 /* Build configuration list for PBXNativeTarget "Psiphon-tvOS-PoCUITests" */;
+			buildPhases = (
+				CEDB605723F5D74E00EFEA56 /* Sources */,
+				CEDB605823F5D74E00EFEA56 /* Frameworks */,
+				CEDB605923F5D74E00EFEA56 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				CEDB605D23F5D74E00EFEA56 /* PBXTargetDependency */,
+			);
+			name = "Psiphon-tvOS-PoCUITests";
+			productName = "Psiphon-tvOS-PoCUITests";
+			productReference = CEDB605B23F5D74E00EFEA56 /* Psiphon-tvOS-PoCUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		CEDB603023F5D74C00EFEA56 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				LastUpgradeCheck = 1110;
+				ORGANIZATIONNAME = Psiphon;
+				TargetAttributes = {
+					CEDB603723F5D74C00EFEA56 = {
+						CreatedOnToolsVersion = 11.1;
+					};
+					CEDB604F23F5D74D00EFEA56 = {
+						CreatedOnToolsVersion = 11.1;
+						TestTargetID = CEDB603723F5D74C00EFEA56;
+					};
+					CEDB605A23F5D74E00EFEA56 = {
+						CreatedOnToolsVersion = 11.1;
+						TestTargetID = CEDB603723F5D74C00EFEA56;
+					};
+				};
+			};
+			buildConfigurationList = CEDB603323F5D74C00EFEA56 /* Build configuration list for PBXProject "Psiphon-tvOS-PoC" */;
+			compatibilityVersion = "Xcode 9.3";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = CEDB602F23F5D74C00EFEA56;
+			productRefGroup = CEDB603923F5D74C00EFEA56 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				CEDB603723F5D74C00EFEA56 /* Psiphon-tvOS-PoC */,
+				CEDB604F23F5D74D00EFEA56 /* Psiphon-tvOS-PoCTests */,
+				CEDB605A23F5D74E00EFEA56 /* Psiphon-tvOS-PoCUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		CEDB603623F5D74C00EFEA56 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				CEDB604823F5D74D00EFEA56 /* LaunchScreen.storyboard in Resources */,
+				CE7ACD6123F6E39000E94520 /* psiphon_config in Resources */,
+				CEDB604523F5D74D00EFEA56 /* Assets.xcassets in Resources */,
+				CEDB604323F5D74C00EFEA56 /* Main.storyboard in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CEDB604E23F5D74D00EFEA56 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CEDB605923F5D74E00EFEA56 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		CEDB603423F5D74C00EFEA56 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				CEDB604023F5D74C00EFEA56 /* ViewController.m in Sources */,
+				CE7ACD5F23F6E0B100E94520 /* util.c in Sources */,
+				CEDB604B23F5D74D00EFEA56 /* main.m in Sources */,
+				CEDB603D23F5D74C00EFEA56 /* AppDelegate.m in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CEDB604C23F5D74D00EFEA56 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				CEDB605523F5D74D00EFEA56 /* Psiphon_tvOS_PoCTests.m in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CEDB605723F5D74E00EFEA56 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				CEDB606023F5D74E00EFEA56 /* Psiphon_tvOS_PoCUITests.m in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		CEDB605223F5D74D00EFEA56 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = CEDB603723F5D74C00EFEA56 /* Psiphon-tvOS-PoC */;
+			targetProxy = CEDB605123F5D74D00EFEA56 /* PBXContainerItemProxy */;
+		};
+		CEDB605D23F5D74E00EFEA56 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = CEDB603723F5D74C00EFEA56 /* Psiphon-tvOS-PoC */;
+			targetProxy = CEDB605C23F5D74E00EFEA56 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin PBXVariantGroup section */
+		CEDB604123F5D74C00EFEA56 /* Main.storyboard */ = {
+			isa = PBXVariantGroup;
+			children = (
+				CEDB604223F5D74C00EFEA56 /* Base */,
+			);
+			name = Main.storyboard;
+			sourceTree = "<group>";
+		};
+		CEDB604623F5D74D00EFEA56 /* LaunchScreen.storyboard */ = {
+			isa = PBXVariantGroup;
+			children = (
+				CEDB604723F5D74D00EFEA56 /* Base */,
+			);
+			name = LaunchScreen.storyboard;
+			sourceTree = "<group>";
+		};
+/* End PBXVariantGroup section */
+
+/* Begin XCBuildConfiguration section */
+		CEDB606223F5D74E00EFEA56 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = appletvos;
+				TVOS_DEPLOYMENT_TARGET = 9.1;
+			};
+			name = Debug;
+		};
+		CEDB606323F5D74E00EFEA56 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = appletvos;
+				TVOS_DEPLOYMENT_TARGET = 9.1;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		CEDB606523F5D74E00EFEA56 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = "App Icon & Top Shelf Image";
+				CODE_SIGN_IDENTITY = "iPhone Distribution";
+				CODE_SIGN_STYLE = Manual;
+				DEVELOPMENT_TEAM = Q6HLNEX92A;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)",
+				);
+				INFOPLIST_FILE = "Psiphon-tvOS-PoC/Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.psiphon3.browser.tv;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "Psiphon tvOS PoC Distribution Profile";
+				TARGETED_DEVICE_FAMILY = 3;
+			};
+			name = Debug;
+		};
+		CEDB606623F5D74E00EFEA56 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = "App Icon & Top Shelf Image";
+				CODE_SIGN_IDENTITY = "iPhone Distribution";
+				CODE_SIGN_STYLE = Manual;
+				DEVELOPMENT_TEAM = Q6HLNEX92A;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)",
+				);
+				INFOPLIST_FILE = "Psiphon-tvOS-PoC/Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.psiphon3.browser.tv;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "Psiphon tvOS PoC Distribution Profile";
+				TARGETED_DEVICE_FAMILY = 3;
+			};
+			name = Release;
+		};
+		CEDB606823F5D74E00EFEA56 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = Q6HLNEX92A;
+				INFOPLIST_FILE = "Psiphon-tvOS-PoCTests/Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "ca.psiphon.Psiphon-tvOS-PoCTests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				TARGETED_DEVICE_FAMILY = 3;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Psiphon-tvOS-PoC.app/Psiphon-tvOS-PoC";
+				TVOS_DEPLOYMENT_TARGET = 13.0;
+			};
+			name = Debug;
+		};
+		CEDB606923F5D74E00EFEA56 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = Q6HLNEX92A;
+				INFOPLIST_FILE = "Psiphon-tvOS-PoCTests/Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "ca.psiphon.Psiphon-tvOS-PoCTests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				TARGETED_DEVICE_FAMILY = 3;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Psiphon-tvOS-PoC.app/Psiphon-tvOS-PoC";
+				TVOS_DEPLOYMENT_TARGET = 13.0;
+			};
+			name = Release;
+		};
+		CEDB606B23F5D74E00EFEA56 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = Q6HLNEX92A;
+				INFOPLIST_FILE = "Psiphon-tvOS-PoCUITests/Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "ca.psiphon.Psiphon-tvOS-PoCUITests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				TARGETED_DEVICE_FAMILY = 3;
+				TEST_TARGET_NAME = "Psiphon-tvOS-PoC";
+			};
+			name = Debug;
+		};
+		CEDB606C23F5D74E00EFEA56 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = Q6HLNEX92A;
+				INFOPLIST_FILE = "Psiphon-tvOS-PoCUITests/Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "ca.psiphon.Psiphon-tvOS-PoCUITests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				TARGETED_DEVICE_FAMILY = 3;
+				TEST_TARGET_NAME = "Psiphon-tvOS-PoC";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		CEDB603323F5D74C00EFEA56 /* Build configuration list for PBXProject "Psiphon-tvOS-PoC" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CEDB606223F5D74E00EFEA56 /* Debug */,
+				CEDB606323F5D74E00EFEA56 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		CEDB606423F5D74E00EFEA56 /* Build configuration list for PBXNativeTarget "Psiphon-tvOS-PoC" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CEDB606523F5D74E00EFEA56 /* Debug */,
+				CEDB606623F5D74E00EFEA56 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		CEDB606723F5D74E00EFEA56 /* Build configuration list for PBXNativeTarget "Psiphon-tvOS-PoCTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CEDB606823F5D74E00EFEA56 /* Debug */,
+				CEDB606923F5D74E00EFEA56 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		CEDB606A23F5D74E00EFEA56 /* Build configuration list for PBXNativeTarget "Psiphon-tvOS-PoCUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CEDB606B23F5D74E00EFEA56 /* Debug */,
+				CEDB606C23F5D74E00EFEA56 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = CEDB603023F5D74C00EFEA56 /* Project object */;
+}
