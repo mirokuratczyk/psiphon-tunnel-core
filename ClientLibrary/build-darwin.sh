@@ -100,31 +100,6 @@ prepare_build () {
 
 }
 
-
-build_for_ios () {
-
-  IOS_BUILD_DIR="${BUILD_DIR}/ios"
-  rm -rf "${IOS_BUILD_DIR}"
-
-  prepare_build darwin
-
-  curl https://raw.githubusercontent.com/golang/go/master/misc/ios/clangwrap.sh -o ${TEMP_DIR}/clangwrap.sh
-  chmod 555 ${TEMP_DIR}/clangwrap.sh
-
-  CC=${TEMP_DIR}/clangwrap.sh \
-  CXX=${TEMP_DIR}/clangwrap.sh \
-  CGO_LDFLAGS="-arch armv7 -isysroot $(xcrun --sdk iphoneos --show-sdk-path)" \
-  CGO_CFLAGS=-isysroot$(xcrun --sdk iphoneos --show-sdk-path) \
-  CGO_ENABLED=1 GOOS=darwin GOARCH=arm GOARM=7 go build -buildmode=c-archive -ldflags "$LDFLAGS" -tags "${BUILD_TAGS}" -o ${IOS_BUILD_DIR}/arm7/libpsiphontunnel.a PsiphonTunnel.go
-
-  CC=${TEMP_DIR}/clangwrap.sh \
-  CXX=${TEMP_DIR}/clangwrap.sh \
-  CGO_LDFLAGS="-arch arm64 -isysroot $(xcrun --sdk iphoneos --show-sdk-path)" \
-  CGO_CFLAGS=-isysroot$(xcrun --sdk iphoneos --show-sdk-path) \
-  CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 go build -buildmode=c-archive -ldflags "$LDFLAGS" -tags "${BUILD_TAGS}" -o ${IOS_BUILD_DIR}/arm64/libpsiphontunnel.a PsiphonTunnel.go
-
-}
-
 build_for_macos () {
 
   MACOS_BUILD_DIR="${BUILD_DIR}/macos"
@@ -140,6 +115,50 @@ build_for_macos () {
   CGO_ENABLED=1 GOOS=darwin GOARCH="${TARGET_ARCH}" go build -buildmode=c-shared -ldflags "-s ${LDFLAGS}" -tags "${BUILD_TAGS}" -o "${MACOS_BUILD_DIR}/${TARGET_ARCH}/libpsiphontunnel.dylib" PsiphonTunnel.go
 
 }
+
+build_for_ios () {
+
+  IOS_BUILD_DIR="${BUILD_DIR}/ios"
+  rm -rf "${IOS_BUILD_DIR}"
+
+  prepare_build darwin
+
+  CC=${BASE_DIR}/util/clangwrap.sh \
+  CXX=${BASE_DIR}/util/clangwrap.sh \
+  CGO_LDFLAGS="-arch armv7 -isysroot $(xcrun --sdk iphoneos --show-sdk-path)" \
+  CGO_CFLAGS=-isysroot$(xcrun --sdk iphoneos --show-sdk-path) \
+  CGO_ENABLED=1 GOOS=darwin GOARCH=arm GOARM=7 go build -buildmode=c-archive -ldflags "$LDFLAGS" -tags "${BUILD_TAGS}" -o ${IOS_BUILD_DIR}/arm7/libpsiphontunnel.a PsiphonTunnel.go
+
+  CC=${BASE_DIR}/util/clangwrap.sh \
+  CXX=${BASE_DIR}/util/clangwrap.sh \
+  CGO_LDFLAGS="-arch arm64 -isysroot $(xcrun --sdk iphoneos --show-sdk-path)" \
+  CGO_CFLAGS=-isysroot$(xcrun --sdk iphoneos --show-sdk-path) \
+  CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 go build -buildmode=c-archive -ldflags "$LDFLAGS" -tags "${BUILD_TAGS}" -o ${IOS_BUILD_DIR}/arm64/libpsiphontunnel.a PsiphonTunnel.go
+
+}
+
+
+build_for_tvos () {
+
+  TVOS_BUILD_DIR="${BUILD_DIR}/tvos"
+  rm -rf "${TVOS_BUILD_DIR}"
+
+  prepare_build darwin
+
+  CC=${BASE_DIR}/util/clangwrap-tvos.sh \
+  CXX=${BASE_DIR}/util/clangwrap-tvos.sh \
+  CGO_LDFLAGS="-arch arm64 -isysroot $(xcrun --sdk appletvos --show-sdk-path) -fembed-bitcode" \
+  CGO_CFLAGS="-isysroot$(xcrun --sdk appletvos --show-sdk-path) -fembed-bitcode" \
+  CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 go build -buildmode=c-archive -ldflags "$LDFLAGS" -tags "${BUILD_TAGS}" -o ${TVOS_BUILD_DIR}/arm64/libpsiphontunnel.a PsiphonTunnel.go
+
+  CC=${BASE_DIR}/util/clangwrap-tvos-simulator.sh \
+  CXX=${BASE_DIR}/util/clangwrap-tvos-simulator.sh \
+  CGO_LDFLAGS="-arch x86_64 -isysroot $(xcrun --sdk appletvsimulator --show-sdk-path) -fembed-bitcode" \
+  CGO_CFLAGS="-isysroot$(xcrun --sdk appletvsimulator --show-sdk-path) -fembed-bitcode" \
+  CGO_ENABLED=1 GOOS=darwin GOARCH=amd64 go build -buildmode=c-archive -ldflags "$LDFLAGS" -tags "${BUILD_TAGS} ios" -o ${TVOS_BUILD_DIR}/amd64/libpsiphontunnel.a PsiphonTunnel.go
+
+}
+
 
 cleanup () {
   # Remove temporary build artifacts
@@ -160,6 +179,14 @@ case $TARGET in
   ios)
     echo "..Building for iOS"
     build_for_ios
+    if [ $? != 0 ]; then
+      exit $?
+    fi
+
+    ;;
+  tvos)
+    echo "..Building for tvOS"
+    build_for_tvos
     if [ $? != 0 ]; then
       exit $?
     fi
