@@ -25,23 +25,14 @@
 		66BDB02F1DA6BFCC0079384C /* PsiphonTunnelTests.m in Sources */ = {isa = PBXBuildFile; fileRef = 66BDB02E1DA6BFCC0079384C /* PsiphonTunnelTests.m */; };
 		66BDB0311DA6BFCC0079384C /* PsiphonTunnel.h in Headers */ = {isa = PBXBuildFile; fileRef = 66BDB0231DA6BFCC0079384C /* PsiphonTunnel.h */; settings = {ATTRIBUTES = (Public, ); }; };
 		66BDB0441DA6C7DD0079384C /* PsiphonTunnel.m in Sources */ = {isa = PBXBuildFile; fileRef = 66BDB0431DA6C7DD0079384C /* PsiphonTunnel.m */; };
-		66BDB05A1DC26CCC0079384C /* SBJson4.h in Headers */ = {isa = PBXBuildFile; fileRef = 66BDB04B1DC26CCC0079384C /* SBJson4.h */; };
-		66BDB05B1DC26CCC0079384C /* SBJson4Parser.h in Headers */ = {isa = PBXBuildFile; fileRef = 66BDB04C1DC26CCC0079384C /* SBJson4Parser.h */; };
-		66BDB05C1DC26CCC0079384C /* SBJson4Parser.m in Sources */ = {isa = PBXBuildFile; fileRef = 66BDB04D1DC26CCC0079384C /* SBJson4Parser.m */; };
-		66BDB05D1DC26CCC0079384C /* SBJson4StreamParser.h in Headers */ = {isa = PBXBuildFile; fileRef = 66BDB04E1DC26CCC0079384C /* SBJson4StreamParser.h */; };
-		66BDB05E1DC26CCC0079384C /* SBJson4StreamParser.m in Sources */ = {isa = PBXBuildFile; fileRef = 66BDB04F1DC26CCC0079384C /* SBJson4StreamParser.m */; };
-		66BDB05F1DC26CCC0079384C /* SBJson4StreamParserState.h in Headers */ = {isa = PBXBuildFile; fileRef = 66BDB0501DC26CCC0079384C /* SBJson4StreamParserState.h */; };
-		66BDB0601DC26CCC0079384C /* SBJson4StreamParserState.m in Sources */ = {isa = PBXBuildFile; fileRef = 66BDB0511DC26CCC0079384C /* SBJson4StreamParserState.m */; };
-		66BDB0611DC26CCC0079384C /* SBJson4StreamTokeniser.h in Headers */ = {isa = PBXBuildFile; fileRef = 66BDB0521DC26CCC0079384C /* SBJson4StreamTokeniser.h */; };
-		66BDB0621DC26CCC0079384C /* SBJson4StreamTokeniser.m in Sources */ = {isa = PBXBuildFile; fileRef = 66BDB0531DC26CCC0079384C /* SBJson4StreamTokeniser.m */; };
-		66BDB0631DC26CCC0079384C /* SBJson4StreamWriter.h in Headers */ = {isa = PBXBuildFile; fileRef = 66BDB0541DC26CCC0079384C /* SBJson4StreamWriter.h */; };
-		66BDB0641DC26CCC0079384C /* SBJson4StreamWriter.m in Sources */ = {isa = PBXBuildFile; fileRef = 66BDB0551DC26CCC0079384C /* SBJson4StreamWriter.m */; };
-		66BDB0651DC26CCC0079384C /* SBJson4StreamWriterState.h in Headers */ = {isa = PBXBuildFile; fileRef = 66BDB0561DC26CCC0079384C /* SBJson4StreamWriterState.h */; };
-		66BDB0661DC26CCC0079384C /* SBJson4StreamWriterState.m in Sources */ = {isa = PBXBuildFile; fileRef = 66BDB0571DC26CCC0079384C /* SBJson4StreamWriterState.m */; };
-		66BDB0671DC26CCC0079384C /* SBJson4Writer.h in Headers */ = {isa = PBXBuildFile; fileRef = 66BDB0581DC26CCC0079384C /* SBJson4Writer.h */; };
-		66BDB0681DC26CCC0079384C /* SBJson4Writer.m in Sources */ = {isa = PBXBuildFile; fileRef = 66BDB0591DC26CCC0079384C /* SBJson4Writer.m */; };
+		CE1E76D524EB1F9700F6C483 /* Error.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE1E76D424EB1F9600F6C483 /* Error.swift */; };
+		CE30C0E724DC67E300C8A011 /* PsiphonNotice.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE30C0E624DC67E300C8A011 /* PsiphonNotice.swift */; };
+		CE30C0E924DC7A0300C8A011 /* PsiphonDiagnosticMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE30C0E824DC7A0300C8A011 /* PsiphonDiagnosticMessage.swift */; };
+		CE30C0EB24DC81A000C8A011 /* PsiphonConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE30C0EA24DC81A000C8A011 /* PsiphonConfig.swift */; };
 		CE3D1DA523906003009A4AF6 /* Backups.h in Headers */ = {isa = PBXBuildFile; fileRef = CE3D1DA323906003009A4AF6 /* Backups.h */; };
 		CE3D1DA623906003009A4AF6 /* Backups.m in Sources */ = {isa = PBXBuildFile; fileRef = CE3D1DA423906003009A4AF6 /* Backups.m */; };
+		CEA0B16324DB0F5100DB3EFE /* PsiphonNoticeProxy.h in Headers */ = {isa = PBXBuildFile; fileRef = CEA0B16124DB0F5100DB3EFE /* PsiphonNoticeProxy.h */; };
+		CEA0B16424DB0F5100DB3EFE /* PsiphonNoticeProxy.m in Sources */ = {isa = PBXBuildFile; fileRef = CEA0B16224DB0F5100DB3EFE /* PsiphonNoticeProxy.m */; };
 		EFED7EBF1F587F6E0078980F /* libresolv.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = EFED7EBE1F587F6E0078980F /* libresolv.tbd */; };
 /* End PBXBuildFile section */
 
@@ -89,23 +80,14 @@
 		66BDB02E1DA6BFCC0079384C /* PsiphonTunnelTests.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = PsiphonTunnelTests.m; sourceTree = "<group>"; };
 		66BDB0301DA6BFCC0079384C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		66BDB0431DA6C7DD0079384C /* PsiphonTunnel.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = PsiphonTunnel.m; sourceTree = "<group>"; };
-		66BDB04B1DC26CCC0079384C /* SBJson4.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = SBJson4.h; sourceTree = "<group>"; };
-		66BDB04C1DC26CCC0079384C /* SBJson4Parser.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = SBJson4Parser.h; sourceTree = "<group>"; };
-		66BDB04D1DC26CCC0079384C /* SBJson4Parser.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = SBJson4Parser.m; sourceTree = "<group>"; };
-		66BDB04E1DC26CCC0079384C /* SBJson4StreamParser.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = SBJson4StreamParser.h; sourceTree = "<group>"; };
-		66BDB04F1DC26CCC0079384C /* SBJson4StreamParser.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = SBJson4StreamParser.m; sourceTree = "<group>"; };
-		66BDB0501DC26CCC0079384C /* SBJson4StreamParserState.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = SBJson4StreamParserState.h; sourceTree = "<group>"; };
-		66BDB0511DC26CCC0079384C /* SBJson4StreamParserState.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = SBJson4StreamParserState.m; sourceTree = "<group>"; };
-		66BDB0521DC26CCC0079384C /* SBJson4StreamTokeniser.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = SBJson4StreamTokeniser.h; sourceTree = "<group>"; };
-		66BDB0531DC26CCC0079384C /* SBJson4StreamTokeniser.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = SBJson4StreamTokeniser.m; sourceTree = "<group>"; };
-		66BDB0541DC26CCC0079384C /* SBJson4StreamWriter.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = SBJson4StreamWriter.h; sourceTree = "<group>"; };
-		66BDB0551DC26CCC0079384C /* SBJson4StreamWriter.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = SBJson4StreamWriter.m; sourceTree = "<group>"; };
-		66BDB0561DC26CCC0079384C /* SBJson4StreamWriterState.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = SBJson4StreamWriterState.h; sourceTree = "<group>"; };
-		66BDB0571DC26CCC0079384C /* SBJson4StreamWriterState.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = SBJson4StreamWriterState.m; sourceTree = "<group>"; };
-		66BDB0581DC26CCC0079384C /* SBJson4Writer.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = SBJson4Writer.h; sourceTree = "<group>"; };
-		66BDB0591DC26CCC0079384C /* SBJson4Writer.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = SBJson4Writer.m; sourceTree = "<group>"; };
+		CE1E76D424EB1F9600F6C483 /* Error.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Error.swift; sourceTree = "<group>"; };
+		CE30C0E624DC67E300C8A011 /* PsiphonNotice.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PsiphonNotice.swift; sourceTree = "<group>"; };
+		CE30C0E824DC7A0300C8A011 /* PsiphonDiagnosticMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PsiphonDiagnosticMessage.swift; sourceTree = "<group>"; };
+		CE30C0EA24DC81A000C8A011 /* PsiphonConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PsiphonConfig.swift; sourceTree = "<group>"; };
 		CE3D1DA323906003009A4AF6 /* Backups.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = Backups.h; sourceTree = "<group>"; };
 		CE3D1DA423906003009A4AF6 /* Backups.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = Backups.m; sourceTree = "<group>"; };
+		CEA0B16124DB0F5100DB3EFE /* PsiphonNoticeProxy.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PsiphonNoticeProxy.h; sourceTree = "<group>"; };
+		CEA0B16224DB0F5100DB3EFE /* PsiphonNoticeProxy.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = PsiphonNoticeProxy.m; sourceTree = "<group>"; };
 		EFED7EBE1F587F6E0078980F /* libresolv.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = libresolv.tbd; path = usr/lib/libresolv.tbd; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
@@ -189,10 +171,15 @@
 			children = (
 				CE3D1D9E239056E4009A4AF6 /* Files */,
 				66BAD3321E525FBC00CD06DE /* JailbreakCheck */,
-				66BDB04A1DC26CCC0079384C /* json-framework */,
 				662659241DD270E900872F6C /* Reachability */,
 				66BDB0231DA6BFCC0079384C /* PsiphonTunnel.h */,
 				66BDB0431DA6C7DD0079384C /* PsiphonTunnel.m */,
+				CEA0B16124DB0F5100DB3EFE /* PsiphonNoticeProxy.h */,
+				CEA0B16224DB0F5100DB3EFE /* PsiphonNoticeProxy.m */,
+				CE30C0EA24DC81A000C8A011 /* PsiphonConfig.swift */,
+				CE1E76D424EB1F9600F6C483 /* Error.swift */,
+				CE30C0E624DC67E300C8A011 /* PsiphonNotice.swift */,
+				CE30C0E824DC7A0300C8A011 /* PsiphonDiagnosticMessage.swift */,
 				66BDB0241DA6BFCC0079384C /* Info.plist */,
 			);
 			path = PsiphonTunnel;
@@ -214,28 +201,6 @@
 				6685BDD81E300AC200F0E414 /* strip-frameworks.sh */,
 			);
 			name = Resources;
-			sourceTree = "<group>";
-		};
-		66BDB04A1DC26CCC0079384C /* json-framework */ = {
-			isa = PBXGroup;
-			children = (
-				66BDB04B1DC26CCC0079384C /* SBJson4.h */,
-				66BDB04C1DC26CCC0079384C /* SBJson4Parser.h */,
-				66BDB04D1DC26CCC0079384C /* SBJson4Parser.m */,
-				66BDB04E1DC26CCC0079384C /* SBJson4StreamParser.h */,
-				66BDB04F1DC26CCC0079384C /* SBJson4StreamParser.m */,
-				66BDB0501DC26CCC0079384C /* SBJson4StreamParserState.h */,
-				66BDB0511DC26CCC0079384C /* SBJson4StreamParserState.m */,
-				66BDB0521DC26CCC0079384C /* SBJson4StreamTokeniser.h */,
-				66BDB0531DC26CCC0079384C /* SBJson4StreamTokeniser.m */,
-				66BDB0541DC26CCC0079384C /* SBJson4StreamWriter.h */,
-				66BDB0551DC26CCC0079384C /* SBJson4StreamWriter.m */,
-				66BDB0561DC26CCC0079384C /* SBJson4StreamWriterState.h */,
-				66BDB0571DC26CCC0079384C /* SBJson4StreamWriterState.m */,
-				66BDB0581DC26CCC0079384C /* SBJson4Writer.h */,
-				66BDB0591DC26CCC0079384C /* SBJson4Writer.m */,
-			);
-			path = "json-framework";
 			sourceTree = "<group>";
 		};
 		CE3D1D9E239056E4009A4AF6 /* Files */ = {
@@ -267,19 +232,12 @@
 				66BAD3351E525FBC00CD06DE /* JailbreakCheck.h in Headers */,
 				4E89F7FF1E2ED3CE00005F4C /* LookupIPv6.h in Headers */,
 				662659271DD270E900872F6C /* Reachability.h in Headers */,
-				66BDB05D1DC26CCC0079384C /* SBJson4StreamParser.h in Headers */,
 				6685BDD41E2EBB1000F0E414 /* GoPsi.objc.h in Headers */,
 				6685BDD51E2EBB1000F0E414 /* Universe.objc.h in Headers */,
-				66BDB05F1DC26CCC0079384C /* SBJson4StreamParserState.h in Headers */,
 				66BDB0311DA6BFCC0079384C /* PsiphonTunnel.h in Headers */,
 				6685BDCA1E2E882800F0E414 /* Psi.h in Headers */,
-				66BDB0651DC26CCC0079384C /* SBJson4StreamWriterState.h in Headers */,
-				66BDB05B1DC26CCC0079384C /* SBJson4Parser.h in Headers */,
+				CEA0B16324DB0F5100DB3EFE /* PsiphonNoticeProxy.h in Headers */,
 				6685BDCD1E2E88A200F0E414 /* Psi-meta.h in Headers */,
-				66BDB05A1DC26CCC0079384C /* SBJson4.h in Headers */,
-				66BDB0611DC26CCC0079384C /* SBJson4StreamTokeniser.h in Headers */,
-				66BDB0631DC26CCC0079384C /* SBJson4StreamWriter.h in Headers */,
-				66BDB0671DC26CCC0079384C /* SBJson4Writer.h in Headers */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -336,6 +294,7 @@
 					66BDB01F1DA6BFCC0079384C = {
 						CreatedOnToolsVersion = 8.0;
 						DevelopmentTeam = Q6HLNEX92A;
+						LastSwiftMigration = 1200;
 						ProvisioningStyle = Automatic;
 					};
 					66BDB0281DA6BFCC0079384C = {
@@ -404,17 +363,15 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				66BDB05E1DC26CCC0079384C /* SBJson4StreamParser.m in Sources */,
-				66BDB0641DC26CCC0079384C /* SBJson4StreamWriter.m in Sources */,
-				66BDB0661DC26CCC0079384C /* SBJson4StreamWriterState.m in Sources */,
-				66BDB05C1DC26CCC0079384C /* SBJson4Parser.m in Sources */,
+				CEA0B16424DB0F5100DB3EFE /* PsiphonNoticeProxy.m in Sources */,
+				CE30C0EB24DC81A000C8A011 /* PsiphonConfig.swift in Sources */,
 				4E89F7FE1E2ED3CE00005F4C /* LookupIPv6.c in Sources */,
 				66BAD3361E525FBC00CD06DE /* JailbreakCheck.m in Sources */,
-				66BDB0681DC26CCC0079384C /* SBJson4Writer.m in Sources */,
-				66BDB0621DC26CCC0079384C /* SBJson4StreamTokeniser.m in Sources */,
+				CE30C0E724DC67E300C8A011 /* PsiphonNotice.swift in Sources */,
 				66BDB0441DA6C7DD0079384C /* PsiphonTunnel.m in Sources */,
 				662659281DD270E900872F6C /* Reachability.m in Sources */,
-				66BDB0601DC26CCC0079384C /* SBJson4StreamParserState.m in Sources */,
+				CE30C0E924DC7A0300C8A011 /* PsiphonDiagnosticMessage.swift in Sources */,
+				CE1E76D524EB1F9700F6C483 /* Error.swift in Sources */,
 				CE3D1DA623906003009A4AF6 /* Backups.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -484,6 +441,7 @@
 				MTL_ENABLE_DEBUG_INFO = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = iphoneos;
+				SWIFT_OBJC_INTERFACE_HEADER_NAME = "PsiphonTunnel-Swift.h";
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VERSIONING_SYSTEM = "apple-generic";
 				VERSION_INFO_PREFIX = "";
@@ -529,6 +487,7 @@
 				IPHONEOS_DEPLOYMENT_TARGET = 10.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				SDKROOT = iphoneos;
+				SWIFT_OBJC_INTERFACE_HEADER_NAME = "PsiphonTunnel-Swift.h";
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VALIDATE_PRODUCT = YES;
 				VERSIONING_SYSTEM = "apple-generic";
@@ -540,6 +499,8 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				APPLICATION_EXTENSION_API_ONLY = YES;
+				BUILD_LIBRARY_FOR_DISTRIBUTION = YES;
+				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_IDENTITY = "";
 				DEFINES_MODULE = YES;
 				DEVELOPMENT_TEAM = Q6HLNEX92A;
@@ -558,6 +519,8 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.psiphon3.ios.PsiphonTunnel;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
 			};
 			name = Debug;
 		};
@@ -565,6 +528,8 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				APPLICATION_EXTENSION_API_ONLY = YES;
+				BUILD_LIBRARY_FOR_DISTRIBUTION = YES;
+				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_IDENTITY = "";
 				DEFINES_MODULE = YES;
 				DEVELOPMENT_TEAM = Q6HLNEX92A;
@@ -583,12 +548,14 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.psiphon3.ios.PsiphonTunnel;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
 			};
 			name = Release;
 		};
 		66BDB0381DA6BFCC0079384C /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
 				DEVELOPMENT_TEAM = Q6HLNEX92A;
 				INFOPLIST_FILE = PsiphonTunnelTests/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @loader_path/Frameworks";
@@ -600,6 +567,7 @@
 		66BDB0391DA6BFCC0079384C /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
 				DEVELOPMENT_TEAM = Q6HLNEX92A;
 				INFOPLIST_FILE = PsiphonTunnelTests/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @loader_path/Frameworks";

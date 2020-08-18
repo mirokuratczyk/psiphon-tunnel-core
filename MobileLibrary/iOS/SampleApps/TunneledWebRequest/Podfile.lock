@@ -11,6 +11,11 @@ DEPENDENCIES:
   - OpenSSL-Universal (= 1.0.2.17)
   - PsiphonTunnel (from `https://github.com/Psiphon-Labs/psiphon-tunnel-core-iOS-library.git`)
 
+SPEC REPOS:
+  trunk:
+    - OpenSSL-Universal
+    - ReactiveObjC
+
 EXTERNAL SOURCES:
   OCSPCache:
     :commit: 71e9f5d
@@ -34,4 +39,4 @@ SPEC CHECKSUMS:
 
 PODFILE CHECKSUM: 659441c6a2f0d01c9d1a665d60e4bc7fa12509d2
 
-COCOAPODS: 1.4.0
+COCOAPODS: 1.8.4
