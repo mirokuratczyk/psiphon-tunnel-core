@@ -464,8 +464,7 @@ func (f *FeedbackWorker) Init(config *psiphon.Config) error {
 // Run implements the Worker interface.
 func (f *FeedbackWorker) Run(ctx context.Context) error {
 
-	// TODO: cancel blocking read when worker context cancelled?
-	diagnostics, err := ioutil.ReadAll(os.Stdin)
+	diagnostics, err := common.ReadAllWithContext(ctx, os.Stdin)
 	if err != nil {
 		return errors.TraceMsg(err, "FeedbackUpload: read stdin failed")
 	}

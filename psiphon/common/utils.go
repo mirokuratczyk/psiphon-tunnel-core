@@ -22,6 +22,7 @@ package common
 import (
 	"bytes"
 	"compress/zlib"
+	"context"
 	"crypto/rand"
 	std_errors "errors"
 	"fmt"
@@ -272,4 +273,35 @@ func SafeParseRequestURI(rawurl string) (*url.URL, error) {
 		}
 	}
 	return parsedURL, err
+}
+
+// ReadAllWithContext provides an interruptible version of ioutil.ReadAll.
+func ReadAllWithContext(ctx context.Context, r io.Reader) ([]byte, error) {
+	if ctx == nil {
+		return nil, errors.TraceNew("nil Context")
+	}
+
+	type result struct {
+		bytes []byte
+		err   error
+	}
+	ch := make(chan (result))
+
+	go func() {
+		b, err := ioutil.ReadAll(r)
+		ch <- result{
+			bytes: b,
+			err:   err,
+		}
+	}()
+
+	select {
+	case <-ctx.Done():
+		return nil, errors.Trace(ctx.Err())
+	case result := <-ch:
+		if result.err != nil {
+			return nil, errors.Trace(result.err)
+		}
+		return result.bytes, nil
+	}
 }
