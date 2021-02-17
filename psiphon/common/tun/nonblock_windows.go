@@ -36,11 +36,6 @@ import (
 // - Fix incomplete offset increments (only using lower 32 bits currently)
 // - Check we are returning the standard Reader/Writer errors so the caller can act accordingly
 
-// TODO/miro: should be in tun_windows.go
-const (
-	DEFAULT_MTU = 1500
-)
-
 // NonblockingIO provides interruptible I/O for non-pollable
 // and/or foreign file descriptors that can't use the netpoller
 // available in os.OpenFile as of Go 1.9.

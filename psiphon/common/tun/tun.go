@@ -1,5 +1,3 @@
-// +build !windows
-
 /*
  * Copyright (c) 2017, Psiphon Inc.
  * All rights reserved.
@@ -135,6 +133,7 @@ import (
 	"net"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 	"unsafe"
 
@@ -2686,7 +2685,7 @@ func NewServerDevice(config *ServerConfig) (*Device, error) {
 		return nil, errors.Trace(err)
 	}
 
-	nio, err := NewNonblockingIO(int(file.Fd()))
+	nio, err := NewNonblockingIO(syscall.Handle(int(file.Fd())))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -2713,7 +2712,7 @@ func NewClientDevice(config *ClientConfig) (*Device, error) {
 		return nil, errors.Trace(err)
 	}
 
-	nio, err := NewNonblockingIO(int(file.Fd()))
+	nio, err := NewNonblockingIO(syscall.Handle(int(file.Fd())))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -2740,7 +2739,8 @@ func newDevice(
 // NewClientDeviceFromFD wraps an existing tun device.
 func NewClientDeviceFromFD(config *ClientConfig) (*Device, error) {
 
-	nio, err := NewNonblockingIO(config.TunFileDescriptor)
+	// TODO/miro: note this is not a file descriptor, but a file handle
+	nio, err := NewNonblockingIO(syscall.Handle(config.TunFileDescriptor))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
