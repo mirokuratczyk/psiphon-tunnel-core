@@ -1,4 +1,4 @@
-// +build darwin linux
+// +build darwin linux windows
 
 /*
  * Copyright (c) 2017, Psiphon Inc.
@@ -29,7 +29,13 @@ import (
 	"sync"
 	"syscall"
 	"testing"
+	"time"
+	"unsafe"
 )
+
+// TODO/miro:
+// - Use duplex named pipe or socket?
+// - Fix race between reader and writer go routines
 
 func TestNonblockingIO(t *testing.T) {
 
@@ -53,14 +59,37 @@ func TestNonblockingIO(t *testing.T) {
 
 	iterations := 10
 	maxIO := 32768
-	messages := 1000
+	messages := 100 // TODO/miro: was 1000
 
 	for iteration := 0; iteration < iterations; iteration++ {
 
-		fds, err := syscall.Socketpair(syscall.AF_LOCAL, syscall.SOCK_STREAM, 0)
+		fmt.Printf("\n\nIteration %d\n\n\n", iteration)
+
+		var r syscall.Handle
+		var w syscall.Handle
+		saAttr := syscall.SecurityAttributes{Length: 0}
+		saAttr.Length = uint32(unsafe.Sizeof(saAttr))
+		saAttr.InheritHandle = 1
+		saAttr.SecurityDescriptor = 0
+
+		// TODO/miro: pipe is unidirectional
+		// TOOD/miro: Asynchronous (overlapped) read and write operations are not supported by anonymous pipes (https://docs.microsoft.com/en-us/windows/win32/ipc/anonymous-pipe-operations)
+		// err := syscall.CreatePipe(&r, &w, &saAttr, 0 /* default buffer size */)
+		// if err != nil {
+		// 	t.Fatalf("CreatePipe failed: %s", err)
+		// 	return
+		// }
+
+		w, err := syscall.CreateFile(syscall.StringToUTF16Ptr("nonblock_test.txt"), syscall.GENERIC_WRITE, syscall.FILE_SHARE_READ, nil, syscall.CREATE_ALWAYS, syscall.FILE_ATTRIBUTE_NORMAL|syscall.FILE_FLAG_OVERLAPPED, 0)
 		if err != nil {
-			t.Fatalf("Socketpair failed: %s", err)
+			t.Fatalf("CreateFile failed: %s", err)
 		}
+		r, err = syscall.CreateFile(syscall.StringToUTF16Ptr("nonblock_test.txt"), syscall.GENERIC_READ, syscall.FILE_SHARE_WRITE, nil, syscall.OPEN_EXISTING, syscall.FILE_ATTRIBUTE_NORMAL|syscall.FILE_FLAG_OVERLAPPED, 0)
+		if err != nil {
+			t.Fatalf("CreateFile failed: %s", err)
+		}
+
+		fds := []syscall.Handle{r, w}
 
 		nio0, err := NewNonblockingIO(fds[0])
 		if err != nil {
@@ -72,15 +101,18 @@ func TestNonblockingIO(t *testing.T) {
 			t.Fatalf("NewNonblockingIO failed: %s", err)
 		}
 
-		syscall.Close(fds[0])
-		syscall.Close(fds[1])
+		// TODO/miro: need to duplicate file handles in NewNonblockingIO
+		// TODO/miro: closes sockets
+		// syscall.Close(fds[0])
+		// syscall.Close(fds[1])
 
 		readers := new(sync.WaitGroup)
 		readersMidpoint := new(sync.WaitGroup)
 		readersEndpoint := new(sync.WaitGroup)
 		writers := new(sync.WaitGroup)
 
-		reader := func(r io.Reader, isClosed func() bool, seed int) {
+		reader := func(r io.Reader, h syscall.Handle, isClosed func() bool, seed int) {
+			time.Sleep(time.Second * 1) // TODO/miro: hack to keep writer ahead of reader since there is no buffering
 			defer readers.Done()
 
 			PRNG := rand.New(rand.NewSource(int64(seed)))
@@ -88,25 +120,40 @@ func TestNonblockingIO(t *testing.T) {
 			expectedData := make([]byte, maxIO)
 			data := make([]byte, maxIO)
 
+			midpointWaitDone := false
+
 			for i := 0; i < messages; i++ {
 				if i%(messages/10) == 0 {
 					fmt.Printf("#%d: %d/%d\n", seed, i, messages)
 				}
 				if i == messages/2 {
 					readersMidpoint.Done()
+					midpointWaitDone = true
 				}
 				n := int(1 + PRNG.Int31n(int32(maxIO)))
 				PRNG.Read(expectedData[:n])
-				_, err := io.ReadFull(r, data[:n])
+				n, err := io.ReadFull(r, data[:n])
 				if err != nil {
 					if isClosed() {
+						if !midpointWaitDone {
+							readersMidpoint.Done()
+						}
+						readersEndpoint.Done()
 						return
 					}
 					t.Errorf("io.ReadFull failed: %s", err)
+					if !midpointWaitDone {
+						readersMidpoint.Done()
+					}
+					readersEndpoint.Done()
 					return
 				}
 				if !bytes.Equal(expectedData[:n], data[:n]) {
 					t.Errorf("bytes.Equal failed")
+					if !midpointWaitDone {
+						readersMidpoint.Done()
+					}
+					readersEndpoint.Done()
 					return
 				}
 			}
@@ -117,13 +164,19 @@ func TestNonblockingIO(t *testing.T) {
 			for n == 0 && err == nil {
 				n, err = r.Read(data)
 			}
-			if n != 0 || err != io.EOF {
-				t.Errorf("expected io.EOF failed")
+			// TODO/miro: this occasionally fails meaning there is unexpected
+			// extra data to read
+
+			if n != 0 || (err != io.EOF && err != syscall.ERROR_HANDLE_EOF) {
+				t.Errorf("expected io.EOF failed: n %d, err %v", n, err)
+				if !midpointWaitDone {
+					readersMidpoint.Done()
+				}
 				return
 			}
 		}
 
-		writer := func(w io.Writer, isClosed func() bool, seed int) {
+		writer := func(w io.Writer, h syscall.Handle, isClosed func() bool, seed int) {
 			defer writers.Done()
 
 			PRNG := rand.New(rand.NewSource(int64(seed)))
@@ -149,29 +202,35 @@ func TestNonblockingIO(t *testing.T) {
 		}
 
 		isClosed := func() bool {
-			return nio0.IsClosed() || nio1.IsClosed()
+			c := nio0.IsClosed() || nio1.IsClosed()
+			return c
 		}
 
-		readers.Add(2)
-		readersMidpoint.Add(2)
-		readersEndpoint.Add(2)
-		go reader(nio0, isClosed, 0)
-		go reader(nio1, isClosed, 1)
+		readers.Add(1)
+		readersMidpoint.Add(1)
+		readersEndpoint.Add(1)
+		go reader(nio0, r, isClosed, 0)
+		// go reader(nio1, isClosed, 1)
 
-		writers.Add(2)
-		go writer(nio0, isClosed, 1)
-		go writer(nio1, isClosed, 0)
+		writers.Add(1)
+		// go writer(nio0, isClosed, 1)
+		go writer(nio1, w, isClosed, 0)
 
+		fmt.Println("Waiting for midpoint...")
 		readersMidpoint.Wait()
 
 		if iteration%2 == 0 {
+			fmt.Println("Waiting for endpoint...")
 			readersEndpoint.Wait()
 		}
 
+		fmt.Println("Closing nio...")
 		nio0.Close()
 		nio1.Close()
 
+		fmt.Println("Closing writers...")
 		writers.Wait()
+		fmt.Println("Closing readers...")
 		readers.Wait()
 	}
 }
