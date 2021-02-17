@@ -31,6 +31,8 @@ import (
 	"github.com/creack/goselect"
 )
 
+// TODO/miro: this could be used for a non-blocking STDIN read in
+// ConsoleClient.
 // NonblockingIO provides interruptible I/O for non-pollable
 // and/or foreign file descriptors that can't use the netpoller
 // available in os.OpenFile as of Go 1.9.
@@ -62,13 +64,17 @@ func NewNonblockingIO(ioFD int) (*NonblockingIO, error) {
 	syscall.ForkLock.RLock()
 	defer syscall.ForkLock.RUnlock()
 
+	// TODO/miro: duplicate file descriptor so we can modify its flags
+	// with fcntl.
 	newFD, err := syscall.Dup(ioFD)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	init := func(fd int) error {
-		syscall.CloseOnExec(fd)
+		syscall.CloseOnExec(fd) // TODO/miro: close fd on fork/execv/etc.
+		// TODO/miro:
+		// https://golang.org/src/syscall/exec_unix.go?s=3742:3796#L96
 		return syscall.SetNonblock(fd, true)
 	}
 
@@ -83,6 +89,7 @@ func NewNonblockingIO(ioFD int) (*NonblockingIO, error) {
 		return nil, errors.Trace(err)
 	}
 
+	// TODO/miro: make each fd on either end of the pipe non-blocking
 	for _, fd := range controlFDs {
 		err = init(fd)
 		if err != nil {
@@ -93,7 +100,14 @@ func NewNonblockingIO(ioFD int) (*NonblockingIO, error) {
 	return &NonblockingIO{
 		ioFD:       newFD,
 		controlFDs: controlFDs,
-		readFDSet:  new(goselect.FDSet),
+		// TODO/miro:
+		// select() allows a program to monitor multiple file descriptors,
+		// waiting until one or more of the file descriptors become "ready"
+		// for some class of I/O operation (e.g., input possible).  A file
+		// descriptor is considered ready if it is possible to perform a
+		// corresponding I/O operation (e.g., read(2), or a sufficiently
+		// small write(2)) without blocking.
+		readFDSet: new(goselect.FDSet),
 		writeFDSets: []*goselect.FDSet{
 			new(goselect.FDSet), new(goselect.FDSet)},
 	}, nil
@@ -116,16 +130,22 @@ func (nio *NonblockingIO) Read(p []byte) (int, error) {
 		if nio.controlFDs[0] > max {
 			max = nio.controlFDs[0]
 		}
+		// TODO/miro: https://man7.org/linux/man-pages/man2/select.2.html
+		// TODO/miro: is -1 maps to NULL timeval so this call blocks until one
+		// FD is ready.
+		// Monitor ctl FD 1 and original file descriptor
 		err := goselect.Select(max+1, nio.readFDSet, nil, nil, -1)
 		if err == syscall.EINTR {
+			// TODO/miro: a signal was caught
 			continue
 		} else if err != nil {
 			return 0, errors.Trace(err)
 		}
+		// TODO/miro: this must be the interrupt
 		if nio.readFDSet.IsSet(uintptr(nio.controlFDs[0])) {
 			return 0, io.EOF
 		}
-		n, err := syscall.Read(nio.ioFD, p)
+		n, err := syscall.Read(nio.ioFD, p) // TODO/miro: nonblocking read
 		if err != nil && err != io.EOF {
 			return n, errors.Trace(err)
 		}
@@ -195,6 +215,7 @@ func (nio *NonblockingIO) Close() error {
 	}
 
 	// Interrupt any Reads/Writes blocked in Select.
+	// TODO/miro: this enabled the non-blocking capability.
 
 	var b [1]byte
 	_, err := syscall.Write(nio.controlFDs[1], b[:])

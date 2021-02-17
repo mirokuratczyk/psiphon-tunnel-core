@@ -100,6 +100,7 @@ The server multiplexes all client packets into a single tun device. When a
 packet is read, the destination address is used to map the packet back to the
 correct index, which maps back to the client.
 
+TODO/miro: very similar to TCP PCBs and the TCP time wait state.
 The server maintains client "sessions". A session maintains client IP
 address state and effectively holds the lease on assigned addresses. If a
 client is disconnected and quickly reconnects, it will resume its previous
@@ -177,6 +178,13 @@ type ServerConfig struct {
 	// platforms.
 	AllowNoIPv6NetworkConfiguration bool
 
+	// TODO/miro: the NAT maps the local IP (and port number?) to
+	// an egress port number and the hosts IP. When traffic comes in
+	// the inverse mapping is applied and the packet is directed
+	// back to the client. TODO: check this in the code.
+	// https://en.wikipedia.org/wiki/Network_address_translation#/media/File:NAT_Concept-en.svg
+	// https://en.wikipedia.org/wiki/Network_address_translation#/media/File:Network_Address_Translation_(file2).jpg
+	// NAPT - network address and port translation
 	// EgressInterface is the interface to which client traffic is
 	// masqueraded/NATed. For example, "eth0". If blank, a platform-
 	// appropriate default is used.
@@ -197,6 +205,11 @@ type ServerConfig struct {
 	// specific, target transparent DNS addresses specified by
 	// GetTransparentDNSResolverIPv4/6Address.
 	//
+	// TODO/miro: they will be lost because we will rewrite the address
+	// to the "target resolver IP address" that was rewritten on the
+	// outbound request. How is this tracked? Probably each outbound
+	// DNS request re-configured the "target resolver IP address" since
+	// the client should likely not be using multiple DNS resolver servers?
 	// For outbound DNS packets with a target resolver IP address,
 	// a random resolver is selected and used for the rewrite.
 	// For inbound packets, _any_ resolver in the list is rewritten
@@ -438,6 +451,8 @@ func (server *Server) ClientConnected(
 
 	} else {
 
+		// TODO/miro: pragmatic rewritting of DNS resolvers once per
+		// session instead of per packet, which would be too costly.
 		// Store IPv4 resolver addresses in 4-byte representation
 		// for use in rewritting.
 		resolvers := server.config.GetDNSResolverIPv4Addresses()
@@ -570,6 +585,10 @@ func (server *Server) resumeSession(
 	// are joined. When the server is stopped, all goroutines in
 	// server.workers are joined. So, in both cases we synchronously
 	// stop all workers associated with this session.
+
+	// TODO/miro: two go-workers are spawned for every connection to:
+	// 1) read packets from client connection and write them to the TUN device
+	// 2) read packets written to the client downstream packet queue from the TUN reader worker and write them back downstream to the client
 
 	session.workers.Add(1)
 	go server.runClientUpstream(session)
@@ -746,10 +765,14 @@ func (server *Server) runDeviceDownstream() {
 			continue
 		}
 
+		// TODO/miro: mapping back to the client
+
 		// destinationIPAddress determines which client receives this packet.
 		// At this point, only enough of the packet is inspected to determine
 		// this routing info; further validation happens in subsequent
 		// processPacket in runClientDownstream.
+
+		// TODO/miro: security feature?
 
 		// Note that masquerading/NAT stands between the Internet and the tun
 		// device, so arbitrary packets cannot be sent through to this point.
@@ -767,6 +790,7 @@ func (server *Server) runDeviceDownstream() {
 
 		// Map destination IP address to client session.
 
+		// TODO/miro: what is this mapping algorithm
 		index := server.convertIPAddressToIndex(destinationIPAddress)
 		s, ok := server.indexToSession.Load(index)
 
@@ -778,6 +802,7 @@ func (server *Server) runDeviceDownstream() {
 
 		session := s.(*session)
 
+		// TODO/miro: each session has its own downstream packets queue
 		downstreamPackets := session.getDownstreamPackets()
 
 		// No downstreamPackets buffer is maintained when no client is
@@ -788,6 +813,10 @@ func (server *Server) runDeviceDownstream() {
 				packetDirectionServerDownstream, packetRejectNoClient)
 			continue
 		}
+
+		// TODO/miro: hand-off to runClientDownstream?
+		// TODO/miro: note below states that reading off of the TUN device
+		// is single threaded.
 
 		// Simply enqueue the packet for client handling, and move on to
 		// read the next packet. The packet tunnel server multiplexes all
@@ -832,6 +861,7 @@ func (server *Server) runClientUpstream(session *session) {
 	// perform rewriting, and send them through to the tun device.
 
 	for {
+		// TODO/miro: endian-ness matters
 		readPacket, err := session.channel.ReadPacket()
 
 		select {
@@ -938,6 +968,7 @@ var (
 	assignedIPv6AddressTemplate       = "fd19:ca83:e6d5:1c44:8c57:4434:ee%02x:%02x%02x"
 )
 
+// TODO/miro: is this safe to network timing attacks? Look at the clients egress IP from Psiphon and then connect?
 func (server *Server) allocateIndex(newSession *session) error {
 
 	// Find and assign an available index in the 24-bit index space.
@@ -1008,6 +1039,7 @@ func (server *Server) allocateIndex(newSession *session) error {
 
 func (server *Server) resetRouting(IPv4Address, IPv6Address net.IP) {
 
+	// TODO/miro: reset NAT table when new client connects (also a security precaution, see comment below)
 	// Attempt to clear the NAT table of any existing connection
 	// states. This will prevent the (already unlikely) delivery
 	// of packets to the wrong client when an assigned IP address is
@@ -1574,7 +1606,8 @@ func (metrics *packetMetrics) checkpoint(
 // packets, the packet queue buffers start small and grow when required,
 // up to the maximum size, and then remain static.
 type PacketQueue struct {
-	maxSize      int
+	maxSize int
+	// TODO/miro: empty buffers recycle buffers to avoid GCing, that's pretty cool
 	emptyBuffers chan []byte
 	activeBuffer chan []byte
 }
@@ -1588,6 +1621,7 @@ func NewPacketQueue(maxSize int) *PacketQueue {
 	// allow packets to continue to enqueue while one buffer
 	// is borrowed by the DequeueFramedPackets caller.
 	//
+	// TODO/miro: read into this?
 	// TODO: is there a way to implement this without
 	// allocating up to 2x maxSize bytes? A circular queue
 	// won't work because we want DequeueFramedPackets
@@ -1790,10 +1824,13 @@ func (client *Client) Start() {
 
 	client.config.Logger.WithTrace().Info("starting")
 
+	// TODO/miro: client upstream packet-tunnel worker
 	client.workers.Add(1)
 	go func() {
 		defer client.workers.Done()
 		for {
+			// TODO/miro: client device packets -> upstream buffer
+			// TODO/miro: this requires readTunPacket implementation in tun_windows.go
 			readPacket, err := client.device.ReadPacket()
 
 			select {
@@ -1824,6 +1861,7 @@ func (client *Client) Start() {
 				continue
 			}
 
+			// TODO/miro: packet batching
 			// Instead of immediately writing to the channel, the
 			// packet is enqueued, which has the effect of batching
 			// up IP packets into a single channel packet (for Psiphon,
@@ -1835,6 +1873,7 @@ func (client *Client) Start() {
 		}
 	}()
 
+	// TODO/miro: client upstream packets -> channel
 	client.workers.Add(1)
 	go func() {
 		defer client.workers.Done()
@@ -1859,6 +1898,7 @@ func (client *Client) Start() {
 		}
 	}()
 
+	// TODO/miro: client downstream packets
 	client.workers.Add(1)
 	go func() {
 		defer client.workers.Done()
@@ -1888,6 +1928,7 @@ func (client *Client) Start() {
 				continue
 			}
 
+			// TODO/miro: this requires writeTunPacket implementation in tun_windows.go
 			err = client.device.WritePacket(readPacket)
 
 			if err != nil {
@@ -2087,6 +2128,7 @@ func getPacketDestinationIPAddress(
 	direction packetDirection,
 	packet []byte) (net.IP, bool) {
 
+	// TODO/miro: take this refactor on?
 	// TODO: this function duplicates a subset of the packet
 	// parsing code in processPacket. Refactor to reuse code;
 	// also, both getPacketDestinationIPAddress and processPacket
@@ -2097,6 +2139,7 @@ func getPacketDestinationIPAddress(
 		return nil, false
 	}
 
+	// TODO/miro: get IP proto version
 	version := packet[0] >> 4
 
 	if version != 4 && version != 6 {
@@ -2735,6 +2778,7 @@ func newDevice(
 	}
 }
 
+// TODO/miro: client creates new device
 // NewClientDeviceFromFD wraps an existing tun device.
 func NewClientDeviceFromFD(config *ClientConfig) (*Device, error) {
 
@@ -2777,6 +2821,7 @@ func (device *Device) ReadPacket() ([]byte, error) {
 	return device.inboundBuffer[offset : offset+size], nil
 }
 
+// TODO/miro: uses a lock to serialize device writes
 // WritePacket writes one full packet to the tun device.
 // Concurrent calls to WritePacket are supported.
 func (device *Device) WritePacket(packet []byte) error {
@@ -2813,6 +2858,7 @@ type Channel struct {
 	outboundBuffer []byte
 }
 
+// TODO/miro: what is this header? Perhaps the size of the packet being received so we know how many bytes to read
 // IP packets cannot be larger that 64K, so a 16-bit length
 // header is sufficient.
 const (
@@ -2840,6 +2886,7 @@ func (channel *Channel) ReadPacket() ([]byte, error) {
 		return nil, errors.Trace(err)
 	}
 
+	// TODO/miro: size of inbound packet
 	size := int(binary.BigEndian.Uint16(header))
 	if size > len(channel.inboundBuffer[channelHeaderSize:]) {
 		return nil, errors.Tracef("packet size exceeds MTU: %d", size)

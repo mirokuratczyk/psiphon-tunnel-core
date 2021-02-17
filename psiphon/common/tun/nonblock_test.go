@@ -44,7 +44,7 @@ func TestNonblockingIO(t *testing.T) {
 	// the writer sent the expected stream of bytes.
 	//
 	// The test is repeated for a number of iterations. For
-	// half the iterations, th test wait only for the midpoint
+	// half the iterations, the test wait only for the midpoint
 	// of communication, so the Close calls will interrupt
 	// active readers and writers. For the other half, wait
 	// for the endpoint, so the readers have received all the

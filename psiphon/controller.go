@@ -140,6 +140,7 @@ func NewController(config *Config) (controller *Controller, err error) {
 
 	controller.splitTunnelClassifier = NewSplitTunnelClassifier(config, controller)
 
+	// TODO/miro: packet tunnel configured
 	if config.PacketTunnelTunFileDescriptor > 0 {
 
 		// Run a packet tunnel client. The lifetime of the tun.Client is the
@@ -258,6 +259,7 @@ func (controller *Controller) Run(ctx context.Context) {
 	go controller.runTunnels()
 
 	if controller.packetTunnelClient != nil {
+		// TODO/miro: packet tunnel client started
 		controller.packetTunnelClient.Start()
 	}
 

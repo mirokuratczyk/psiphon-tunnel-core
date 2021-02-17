@@ -203,6 +203,7 @@ func (device *Device) readTunPacket() (int, int, error) {
 	// so buffer is sufficiently large to always read a complete packet,
 	// along with the 4 byte utun header.
 
+	// TODO/miro: reads into the buffer which is of MTU size
 	n, err := device.deviceIO.Read(device.inboundBuffer)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
