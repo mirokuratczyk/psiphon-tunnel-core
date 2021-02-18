@@ -136,6 +136,8 @@ func NewTunnelServer(
 // comment in sshClient.stop(). TODO: fully synchronized shutdown.
 func (server *TunnelServer) Run() error {
 
+	fmt.Println(errors.Tracef("Run"))
+
 	// TODO: should TunnelServer hold its own support pointer?
 	support := server.sshServer.support
 
@@ -1872,6 +1874,8 @@ func (sshClient *sshClient) runTunnel(
 	channels <-chan ssh.NewChannel,
 	requests <-chan *ssh.Request) {
 
+	fmt.Println(errors.Tracef("runTunnel"))
+
 	waitGroup := new(sync.WaitGroup)
 
 	// Start client SSH API request handler
@@ -1923,12 +1927,16 @@ func (sshClient *sshClient) runTunnel(
 	for newChannel := range channels {
 		switch newChannel.ChannelType() {
 		case protocol.RANDOM_STREAM_CHANNEL_TYPE:
+			fmt.Println(errors.Tracef("random stream"))
 			sshClient.handleNewRandomStreamChannel(waitGroup, newChannel)
 		case protocol.PACKET_TUNNEL_CHANNEL_TYPE:
+			fmt.Println(errors.Tracef("packet tunnel"))
 			sshClient.handleNewPacketTunnelChannel(waitGroup, newChannel)
 		case "direct-tcpip":
+			fmt.Println(errors.Tracef("tcp port forward"))
 			sshClient.handleNewTCPPortForwardChannel(waitGroup, newChannel, newTCPPortForwards)
 		default:
+			fmt.Println(errors.Tracef("reject channel"))
 			sshClient.rejectNewChannel(newChannel,
 				fmt.Sprintf("unknown or unsupported channel type: %s", newChannel.ChannelType()))
 		}
@@ -2260,6 +2268,8 @@ func (sshClient *sshClient) handleNewPacketTunnelChannel(
 	// component. Each client may have at most one packet tunnel channel.
 
 	if !sshClient.sshServer.support.Config.RunPacketTunnel {
+		// TODO/miro: does this silently fail on the client?
+		fmt.Println(errors.Tracef("rejecting packet tunnel"))
 		sshClient.rejectNewChannel(newChannel, "unsupported packet tunnel channel type")
 		return
 	}
@@ -2267,8 +2277,10 @@ func (sshClient *sshClient) handleNewPacketTunnelChannel(
 	// Accept this channel immediately. This channel will replace any
 	// previously existing packet tunnel channel for this client.
 
+	fmt.Println(errors.Tracef("accepting packet tunnel channel"))
 	packetTunnelChannel, requests, err := newChannel.Accept()
 	if err != nil {
+		fmt.Println(errors.Tracef("accept new channel failed"))
 		if !isExpectedTunnelIOError(err) {
 			log.WithTraceFields(LogFields{"error": err}).Warning("accept new channel failed")
 		}
@@ -2276,7 +2288,9 @@ func (sshClient *sshClient) handleNewPacketTunnelChannel(
 	}
 	go ssh.DiscardRequests(requests)
 
+	fmt.Println(errors.Tracef("set packet tunnel channel"))
 	sshClient.setPacketTunnelChannel(packetTunnelChannel)
+	fmt.Println(errors.Tracef("set packet tunnel channel done"))
 
 	// PacketTunnelServer will run the client's packet tunnel. If necessary, ClientConnected
 	// will stop packet tunnel workers for any previous packet tunnel channel.
@@ -2317,6 +2331,7 @@ func (sshClient *sshClient) handleNewPacketTunnelChannel(
 		sshClient.Unlock()
 	}
 
+	fmt.Println(errors.TraceNew("client connected"))
 	err = sshClient.sshServer.support.PacketTunnelServer.ClientConnected(
 		sshClient.sessionID,
 		packetTunnelChannel,

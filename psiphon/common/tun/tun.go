@@ -521,6 +521,8 @@ func (server *Server) resumeSession(
 	flowActivityUpdaterMaker FlowActivityUpdaterMaker,
 	metricsUpdater MetricsUpdater) {
 
+	fmt.Println(errors.TraceNew("resume session"))
+
 	session.mutex.Lock()
 	defer session.mutex.Unlock()
 
@@ -731,8 +733,10 @@ func (server *Server) runDeviceDownstream() {
 	// the packets to the client.
 
 	for {
+		fmt.Println(errors.Tracef("reading packet from device"))
 		readPacket, err := server.device.ReadPacket()
 
+		fmt.Println(errors.Tracef("read packet from device"))
 		select {
 		case <-server.runContext.Done():
 			// No error is logged as shutdown may have interrupted read.
@@ -762,6 +766,7 @@ func (server *Server) runDeviceDownstream() {
 			server.orphanMetrics, packetDirectionServerDownstream, readPacket)
 
 		if !ok {
+			fmt.Println(errors.Tracef("dropping packet"))
 			// Packet is dropped. Reason will be counted in orphan metrics.
 			continue
 		}
@@ -772,6 +777,7 @@ func (server *Server) runDeviceDownstream() {
 		s, ok := server.indexToSession.Load(index)
 
 		if !ok {
+			fmt.Println(errors.Tracef("rejecting packet"))
 			server.orphanMetrics.rejectedPacket(
 				packetDirectionServerDownstream, packetRejectNoSession)
 			continue
@@ -779,12 +785,18 @@ func (server *Server) runDeviceDownstream() {
 
 		session := s.(*session)
 
+		fmt.Println(errors.Tracef("getting downstream packets"))
+
+		// TODO/miro: each session has its own downstream packets queue
 		downstreamPackets := session.getDownstreamPackets()
+
+		fmt.Println(errors.Tracef("got downstream packets"))
 
 		// No downstreamPackets buffer is maintained when no client is
 		// connected, so the packet is dropped.
 
 		if downstreamPackets == nil {
+			fmt.Println(errors.Tracef("downstream packets nil"))
 			server.orphanMetrics.rejectedPacket(
 				packetDirectionServerDownstream, packetRejectNoClient)
 			continue
@@ -817,9 +829,12 @@ func (server *Server) runDeviceDownstream() {
 			session,
 			packetDirectionServerDownstream,
 			readPacket) {
+			fmt.Println(errors.Tracef("processPacket rejected packet"))
 			// Packet is rejected and dropped. Reason will be counted in metrics.
 			continue
 		}
+
+		fmt.Println(errors.Tracef("enqueuing packet"))
 
 		downstreamPackets.Enqueue(readPacket)
 	}
@@ -833,7 +848,17 @@ func (server *Server) runClientUpstream(session *session) {
 	// perform rewriting, and send them through to the tun device.
 
 	for {
+<<<<<<< Updated upstream
+=======
+		// TODO/miro: endian-ness matters
+		fmt.Println(errors.TraceNew("reading session channel"))
+>>>>>>> Stashed changes
 		readPacket, err := session.channel.ReadPacket()
+		if err == nil {
+			fmt.Println(errors.TraceNew("read session channel"))
+		} else {
+			fmt.Println(errors.Tracef("read session channel error %v", err))
+		}
 
 		select {
 		case <-session.runContext.Done():
@@ -896,17 +921,23 @@ func (server *Server) runClientDownstream(session *session) {
 
 	for {
 
+		fmt.Println(errors.Tracef("getting downstream packets"))
 		downstreamPackets := session.getDownstreamPackets()
+		fmt.Println(errors.Tracef("got downstream packets"))
 		// Note: downstreamPackets will not be nil, since this goroutine only
 		// runs while the session has a connected client.
 
+		fmt.Println(errors.Tracef("dequeuing downstream packets"))
 		packetBuffer, ok := downstreamPackets.DequeueFramedPackets(session.runContext)
+		fmt.Println(errors.Tracef("dequeued downstream packets"))
 		if !ok {
 			// Dequeue aborted due to session.runContext.Done()
 			return
 		}
 
+		fmt.Println(errors.Tracef("writing framed packets"))
 		err := session.channel.WriteFramedPackets(packetBuffer)
+		fmt.Println(errors.Tracef("wrote framed packets"))
 		if err != nil {
 
 			// Debug since channel I/O errors occur during normal operation.
@@ -923,6 +954,7 @@ func (server *Server) runClientDownstream(session *session) {
 
 		session.touch()
 
+		fmt.Println(errors.Tracef("replacing packet buffer"))
 		downstreamPackets.Replace(packetBuffer)
 	}
 }
@@ -2836,6 +2868,7 @@ func NewChannel(transport io.ReadWriteCloser, MTU int) *Channel {
 // Concurrent calls to ReadPacket are not supported.
 func (channel *Channel) ReadPacket() ([]byte, error) {
 
+	fmt.Println(errors.Tracef("reading header"))
 	header := channel.inboundBuffer[0:channelHeaderSize]
 	_, err := io.ReadFull(channel.transport, header)
 	if err != nil {
@@ -2843,6 +2876,9 @@ func (channel *Channel) ReadPacket() ([]byte, error) {
 	}
 
 	size := int(binary.BigEndian.Uint16(header))
+
+	fmt.Println(errors.Tracef("read header of size %d", size))
+
 	if size > len(channel.inboundBuffer[channelHeaderSize:]) {
 		return nil, errors.Tracef("packet size exceeds MTU: %d", size)
 	}

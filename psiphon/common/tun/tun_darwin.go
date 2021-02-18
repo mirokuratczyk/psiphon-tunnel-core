@@ -257,9 +257,6 @@ func configureServerInterface(
 	config *ServerConfig,
 	tunDeviceName string) error {
 
-	// TODO: fix or remove the following broken code
-	return errors.Trace(errUnsupported)
-
 	// Set tun device network addresses and MTU
 
 	IPv4Address, IPv4Netmask, err := splitIPMask(serverIPv4AddressCIDR)
