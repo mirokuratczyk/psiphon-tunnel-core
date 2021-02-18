@@ -875,15 +875,10 @@ func (server *Server) runClientUpstream(session *session) {
 	// perform rewriting, and send them through to the tun device.
 
 	for {
-<<<<<<< Updated upstream
-		// TODO/miro: endian-ness matters
-=======
-<<<<<<< Updated upstream
-=======
+
 		// TODO/miro: endian-ness matters
 		fmt.Println(errors.TraceNew("reading session channel"))
->>>>>>> Stashed changes
->>>>>>> Stashed changes
+
 		readPacket, err := session.channel.ReadPacket()
 		if err == nil {
 			fmt.Println(errors.TraceNew("read session channel"))
