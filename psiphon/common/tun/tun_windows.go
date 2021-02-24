@@ -1,4 +1,4 @@
-// +build !darwin,!linux,!windows
+// +build windows
 
 /*
  * Copyright (c) 2017, Psiphon Inc.
@@ -30,19 +30,19 @@ import (
 )
 
 const (
-	DEFAULT_PUBLIC_INTERFACE_NAME = ""
+	DEFAULT_PUBLIC_INTERFACE_NAME = "" // TODO/miro: for compilation, implement or remove
 )
 
 func IsSupported() bool {
-	return false
+	return true
 }
 
-func makeDeviceInboundBuffer(_ int) []byte {
-	return nil
+func makeDeviceInboundBuffer(MTU int) []byte {
+	return make([]byte, MTU)
 }
 
-func makeDeviceOutboundBuffer(_ int) []byte {
-	return nil
+func makeDeviceOutboundBuffer(MTU int) []byte {
+	return make([]byte, MTU)
 }
 
 func OpenTunDevice(_ string) (*os.File, string, error) {
@@ -50,11 +50,24 @@ func OpenTunDevice(_ string) (*os.File, string, error) {
 }
 
 func (device *Device) readTunPacket() (int, int, error) {
-	return 0, 0, errors.Trace(errUnsupported)
+	n, err := device.deviceIO.Read(device.inboundBuffer)
+	if err != nil {
+		return 0, 0, errors.Trace(err)
+	}
+	return 0, n, nil
 }
 
-func (device *Device) writeTunPacket(_ []byte) error {
-	return errors.Trace(errUnsupported)
+func (device *Device) writeTunPacket(packet []byte) error {
+	copy(device.outboundBuffer[:], packet)
+
+	size := len(packet)
+
+	_, err := device.deviceIO.Write(device.outboundBuffer[:size])
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	return nil
 }
 
 func configureNetworkConfigSubprocessCapabilities() error {
@@ -74,33 +87,12 @@ func configureClientInterface(_ *ClientConfig, _ string) error {
 }
 
 func BindToDevice(_ int, _ string) error {
+	// TODO/miro: not required ATM because we'll whitelist the process by pid
+	// for the POC
 	return errors.Trace(errUnsupported)
 }
 
 func fixBindToDevice(_ common.Logger, _ bool, _ string) error {
 	// Not required
 	return nil
-}
-
-type NonblockingIO struct {
-}
-
-func NewNonblockingIO(ioFD int) (*NonblockingIO, error) {
-	return nil, errors.Trace(errUnsupported)
-}
-
-func (nio *NonblockingIO) Read(p []byte) (int, error) {
-	return 0, errors.Trace(errUnsupported)
-}
-
-func (nio *NonblockingIO) Write(p []byte) (int, error) {
-	return 0, errors.Trace(errUnsupported)
-}
-
-func (nio *NonblockingIO) IsClosed() bool {
-	return false
-}
-
-func (nio *NonblockingIO) Close() error {
-	return errors.Trace(errUnsupported)
 }
