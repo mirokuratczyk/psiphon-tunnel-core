@@ -18,22 +18,28 @@
  */
 
 #import "NetworkID.h"
+#import "NetworkInterface.h"
 #import <CoreTelephony/CTTelephonyNetworkInfo.h>
 #import <CoreTelephony/CTCarrier.h>
 #import <SystemConfiguration/CaptiveNetwork.h>
 
+NSString *kNetworkIDUnknown = @"UNKNOWN";
+
 @implementation NetworkID
 
-+ (NSString *)getNetworkID:(NetworkReachability)networkReachability {
++ (NSString *)getNetworkID:(NetworkReachability)networkReachability
+defaultActiveInterfaceName:(NSString*)defaultActiveInterfaceName
+                     error:(NSError *_Nullable *_Nonnull)outError {
+    *outError = nil;
 
-    NSMutableString *networkID = [NSMutableString stringWithString:@"UNKNOWN"];
+    NSMutableString *networkID = [NSMutableString stringWithString:kNetworkIDUnknown];
     if (networkReachability == NetworkReachabilityReachableViaWiFi) {
         [networkID setString:@"WIFI"];
         NSArray *networkInterfaceNames = (__bridge_transfer id)CNCopySupportedInterfaces();
         for (NSString *networkInterfaceName in networkInterfaceNames) {
             NSDictionary *networkInterfaceInfo = (__bridge_transfer id)CNCopyCurrentNetworkInfo((__bridge CFStringRef)networkInterfaceName);
-            if (networkInterfaceInfo[@"BSSID"]) {
-                [networkID appendFormat:@"-%@", networkInterfaceInfo[@"BSSID"]];
+            if (networkInterfaceInfo[(__bridge NSString*)kCNNetworkInfoKeyBSSID]) {
+                [networkID appendFormat:@"-%@", networkInterfaceInfo[(__bridge NSString*)kCNNetworkInfoKeyBSSID]];
             }
         }
     } else if (networkReachability == NetworkReachabilityReachableViaCellular) {
@@ -47,6 +53,19 @@
         }
     } else if (networkReachability == NetworkReachabilityReachableViaWired) {
         [networkID setString:@"WIRED"];
+        if (defaultActiveInterfaceName != NULL) {
+            NSError *err;
+            NSString *interfaceAddress = [NetworkInterface getInterfaceAddress:defaultActiveInterfaceName
+                                                                         error:&err];
+            if (err != nil) {
+                NSString *localizedDescription =
+                    [NSString stringWithFormat:@"getNetworkID: error getting interface address %@", err.localizedDescription];
+                *outError = [[NSError alloc] initWithDomain:@"iOSLibrary" code:1 userInfo:@{NSLocalizedDescriptionKey: localizedDescription}];
+                return nil;
+            } else if (interfaceAddress != nil) {
+                [networkID appendFormat:@"-%@", interfaceAddress];
+            }
+        }
     } else if (networkReachability == NetworkReachabilityReachableViaLoopback) {
         [networkID setString:@"LOOPBACK"];
     }

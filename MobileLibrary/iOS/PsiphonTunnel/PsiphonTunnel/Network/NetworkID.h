@@ -22,6 +22,8 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+extern NSString *kNetworkIDUnknown;
+
 @interface NetworkID : NSObject
 
 /// The network ID contains potential PII. In tunnel-core, the network ID
@@ -29,7 +31,12 @@ NS_ASSUME_NONNULL_BEGIN
 ///
 /// See network ID requirements here:
 /// https://godoc.org/github.com/Psiphon-Labs/psiphon-tunnel-core/psiphon#NetworkIDGetter
-+ (NSString *)getNetworkID:(NetworkReachability)networkReachability;
+/// @param networkReachability Network reachability status.
+/// @param defaultActiveInterfaceName Interface associated with the default route on the device.
+/// @param outError If non-nil, then an error occurred while trying determine the network ID.
++ (NSString*_Nullable)getNetworkID:(NetworkReachability)networkReachability
+        defaultActiveInterfaceName:(NSString*_Nullable)defaultActiveInterfaceName
+                             error:(NSError *_Nullable *_Nonnull)outError;
 
 @end
 

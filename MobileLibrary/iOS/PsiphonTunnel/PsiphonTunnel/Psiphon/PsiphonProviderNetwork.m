@@ -27,18 +27,38 @@
 
 @implementation PsiphonProviderNetwork {
     id<ReachabilityProtocol> reachability;
+    void (^logger) (NSString *_Nonnull);
+}
+
+- (void)initialize {
+    if (@available(iOS 12.0, *)) {
+        self->reachability = [[DefaultRouteMonitor alloc] init];
+    } else {
+        self->reachability = [Reachability reachabilityForInternetConnection];
+    }
 }
 
 - (id)init {
     self = [super init];
     if (self) {
-        if (@available(iOS 12.0, *)) {
-            self->reachability = [[DefaultRouteMonitor alloc] init];
-        } else {
-            self->reachability = [Reachability reachabilityForInternetConnection];
-        }
+        [self initialize];
     }
     return self;
+}
+
+- (instancetype)initWithLogger:(void (^__nonnull)(NSString *_Nonnull))logger {
+    self = [super init];
+    if (self) {
+        [self initialize];
+        self->logger = logger;
+    }
+    return self;
+}
+
+- (void)log:(NSString*)notice {
+    if (self->logger != nil) {
+        self->logger(notice);
+    }
 }
 
 - (long)hasNetworkConnectivity {
@@ -51,7 +71,28 @@
 }
 
 - (NSString *)getNetworkID {
-    return [NetworkID getNetworkID:reachability.reachabilityStatus];
+
+    NetworkReachability currentNetworkStatus = reachability.reachabilityStatus;
+
+    NSError *err;
+    NSString *activeInterface =
+        [NetworkInterface getActiveInterfaceWithReachability:self->reachability
+                                     andCurrentNetworkStatus:currentNetworkStatus
+                                                       error:&err];
+    if (err != nil) {
+        [self log:[NSString stringWithFormat:@"error getting active interface %@", err.localizedDescription]];
+        return kNetworkIDUnknown;
+    }
+
+    NSString *networkID = [NetworkID getNetworkID:currentNetworkStatus
+                       defaultActiveInterfaceName:activeInterface
+                                            error:&err];
+    if (err != nil) {
+        [self log:[NSString stringWithFormat:@"error getting network ID %@", err.localizedDescription]];
+        return kNetworkIDUnknown;
+    }
+
+    return networkID;
 }
 
 @end
