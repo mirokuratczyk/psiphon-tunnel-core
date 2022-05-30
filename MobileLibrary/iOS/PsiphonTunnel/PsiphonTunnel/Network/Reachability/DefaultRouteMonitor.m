@@ -26,6 +26,8 @@
 /// See comment in DefaultRouteMonitor.h
 @property (nonatomic) NetworkReachability reachabilityStatus;
 /// See comment in DefaultRouteMonitor.h
+@property (nonatomic) BOOL initialReachabilityUpdate;
+/// See comment in DefaultRouteMonitor.h
 @property (nonatomic, nullable) NSString *curDefaultActiveInterfaceName;
 /// See comment in DefaultRouteMonitor.h
 @property (nonatomic, nullable) NSString *prevDefaultActiveInterfaceName;
@@ -34,11 +36,13 @@
 @implementation ReachabilityChangedNotification
 
 - (instancetype)initWithReachabilityStatus:(NetworkReachability)networkReachability
+                 initialReachabilityUpdate:(BOOL)initialReachabilityUpdate
              curDefaultActiveInterfaceName:(NSString*)curDefaultActiveInterfaceName
             prevDefaultActiveInterfaceName:(NSString*)prevDefaultActiveInterfaceName {
     self = [super init];
     if (self) {
         self->_reachabilityStatus = networkReachability;
+        self->_initialReachabilityUpdate = initialReachabilityUpdate;
         self->_curDefaultActiveInterfaceName = curDefaultActiveInterfaceName;
         self->_prevDefaultActiveInterfaceName = prevDefaultActiveInterfaceName;
     }
@@ -52,6 +56,7 @@
     dispatch_queue_t workQueue;
     NetworkReachability status;
     NetworkPathState* state;
+    BOOL initialReachabilityUpdate;
 
     void (^logger) (NSString *_Nonnull);
 }
@@ -59,6 +64,7 @@
 - (void)initialize {
     self->state = nil;
     self->status = NetworkReachabilityNotReachable;
+    self->initialReachabilityUpdate = TRUE;
     self->workQueue = dispatch_queue_create("com.psiphon3.library.NWInterfaceNWPathMonitorQueue", DISPATCH_QUEUE_SERIAL);
 }
 
@@ -130,6 +136,8 @@ NetworkReachability nw_interface_type_network_reachability(nw_interface_type_t i
         nw_path_monitor_set_queue(self->monitor, self->workQueue);
 
         nw_path_monitor_set_update_handler(self->monitor, ^(nw_path_t  _Nonnull path) {
+            // TODO: should this be synchronized
+
             [self log:[NSString stringWithFormat:@"new path: %@",
                        [DefaultRouteMonitor pathDebugInfo:path]]];
 
@@ -199,11 +207,14 @@ NetworkReachability nw_interface_type_network_reachability(nw_interface_type_t i
             ReachabilityChangedNotification *notif =
                 [[ReachabilityChangedNotification alloc]
                  initWithReachabilityStatus:self->status
+                 initialReachabilityUpdate:self->initialReachabilityUpdate
                  curDefaultActiveInterfaceName:newPathState.defaultActiveInterfaceName
                  prevDefaultActiveInterfaceName:prevDefaultActiveInterfaceName];
             [[NSNotificationCenter defaultCenter]
              postNotificationName:[DefaultRouteMonitor reachabilityChangedNotification]
              object:notif];
+
+            self->initialReachabilityUpdate = FALSE;
         });
         nw_path_monitor_start(self->monitor);
     }

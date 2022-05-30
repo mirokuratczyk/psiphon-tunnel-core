@@ -117,13 +117,14 @@ typedef NS_ERROR_ENUM(PsiphonTunnelErrorDomain, PsiphonTunnelErrorCode) {
     _Atomic NetworkReachability currentNetworkStatus;
 
     BOOL tunnelWholeDevice;
+    _Atomic BOOL resettingNetwork;
     _Atomic BOOL usingNoticeFiles;
 
     // DNS
     NSString *primaryGoogleDNS;
     NSString *secondaryGoogleDNS;
-    _Atomic BOOL useInitialDNS; // initialDNSCache validity flag.
-    NSArray<NSString *> *initialDNSCache;  // This cache becomes void if internetReachabilityChanged is called.
+    _Atomic BOOL useDNSCache; // dnsCache validity flag.
+    NSArray<NSString *> *dnsCache;
     
     // Log timestamp formatter
     // Note: NSDateFormatter is threadsafe.
@@ -153,6 +154,7 @@ typedef NS_ERROR_ENUM(PsiphonTunnelErrorDomain, PsiphonTunnelErrorCode) {
     atomic_init(&self->currentNetworkStatus, NetworkReachabilityNotReachable);
     self->tunnelWholeDevice = FALSE;
     atomic_init(&self->usingNoticeFiles, FALSE);
+    atomic_init(&self->resettingNetwork, FALSE);
 
     // Randomize order of Google DNS servers on start,
     // and consistently return in that fixed order.
@@ -164,8 +166,8 @@ typedef NS_ERROR_ENUM(PsiphonTunnelErrorDomain, PsiphonTunnelErrorCode) {
         self->secondaryGoogleDNS = GOOGLE_DNS_1;
     }
 
-    self->initialDNSCache = [self getDNSServers];
-    atomic_init(&self->useInitialDNS, [self->initialDNSCache count] > 0);
+    self->dnsCache = [self getDNSServers];
+    atomic_init(&self->useDNSCache, [self->dnsCache count] > 0);
 
     rfc3339Formatter = [PsiphonTunnel rfc3339Formatter];
 
@@ -419,6 +421,7 @@ typedef NS_ERROR_ENUM(PsiphonTunnelErrorDomain, PsiphonTunnelErrorCode) {
         atomic_store(&self->localSocksProxyPort, 0);
         atomic_store(&self->localHttpProxyPort, 0);
 
+        // TODO: this notice isn't sent to app
         [self changeConnectionStateTo:PsiphonConnectionStateDisconnected evenIfSameState:NO];
     }
 }
@@ -1224,8 +1227,8 @@ typedef NS_ERROR_ENUM(PsiphonTunnelErrorDomain, PsiphonTunnelErrorCode) {
     // This function is only called when BindToDevice is used/supported.
     // TODO: Implement correctly
 
-    if (atomic_load(&self->useInitialDNS)) {
-        return self->initialDNSCache[0];
+    if (atomic_load(&self->useDNSCache)) {
+        return self->dnsCache[0];
     } else {
         return self->primaryGoogleDNS;
     }
@@ -1235,8 +1238,8 @@ typedef NS_ERROR_ENUM(PsiphonTunnelErrorDomain, PsiphonTunnelErrorCode) {
     // This function is only called when BindToDevice is used/supported.
     // TODO: Implement correctly
 
-    if (atomic_load(&self->useInitialDNS) && [self->initialDNSCache count] > 1) {
-        return self->initialDNSCache[1];
+    if (atomic_load(&self->useDNSCache) && [self->dnsCache count] > 1) {
+        return self->dnsCache[1];
     } else {
         return self->secondaryGoogleDNS;
     }
@@ -1244,7 +1247,7 @@ typedef NS_ERROR_ENUM(PsiphonTunnelErrorDomain, PsiphonTunnelErrorCode) {
 
 - (long)hasNetworkConnectivity {
 
-    BOOL hasConnectivity = [self->reachability reachabilityStatus] != NetworkReachabilityNotReachable;
+    BOOL hasConnectivity = [self->reachability reachabilityStatus] != NetworkReachabilityNotReachable && !atomic_load(&self->resettingNetwork);
 
     if (!hasConnectivity) {
         // changeConnectionStateTo self-throttles, so even if called multiple
@@ -1283,6 +1286,15 @@ typedef NS_ERROR_ENUM(PsiphonTunnelErrorDomain, PsiphonTunnelErrorCode) {
 }
 
 #pragma mark - Helpers (private)
+
+- (NSString*)resetDNSCache {
+    self->dnsCache = [self getDNSServers];
+    return [self getInitialDNSCacheDEBUG];
+}
+
+- (void)networkSettingsReset {
+    atomic_store(&self->resettingNetwork, FALSE);
+}
 
 /**
     @brief Returns NSString array of DNS addresses for current active
@@ -1331,6 +1343,24 @@ typedef NS_ERROR_ENUM(PsiphonTunnelErrorDomain, PsiphonTunnelErrorCode) {
     free(_state);
 
     return serverList;
+}
+
+// TODO: remove
+- (NSString *)getDNSServersDEBUG {
+    NSMutableArray<NSString*>*arr = [[NSMutableArray alloc] init];
+    for (NSString *dnsServer in [self getDNSServers]) {
+        [arr addObject:[dnsServer stringByReplacingOccurrencesOfString:@"." withString:@"-"]];
+    }
+    return [arr componentsJoinedByString:@","];
+}
+
+// TODO: remove
+- (NSString *)getInitialDNSCacheDEBUG {
+    NSMutableArray<NSString*>*arr = [[NSMutableArray alloc] init];
+    for (NSString *dnsServer in self->dnsCache) {
+        [arr addObject:[dnsServer stringByReplacingOccurrencesOfString:@"." withString:@"-"]];
+    }
+    return [arr componentsJoinedByString:@","];
 }
 
 - (void)changeConnectionStateTo:(PsiphonConnectionState)newState evenIfSameState:(BOOL)forceNotification {
@@ -1428,17 +1458,16 @@ typedef NS_ERROR_ENUM(PsiphonTunnelErrorDomain, PsiphonTunnelErrorCode) {
 }
 
 - (void)internetReachabilityChanged:(NSNotification *)note {
-    // Invalidate initialDNSCache.
-    atomic_store(&self->useInitialDNS, FALSE);
-
     NetworkReachability networkStatus;
     NetworkReachability previousNetworkStatus;
     BOOL interfaceChanged = FALSE;
+    BOOL initialReachabilityUpdate = FALSE;
 
     // Pass current reachability through to the delegate
     // as soon as a network reachability change is detected
     if (@available(iOS 12.0, *)) {
         ReachabilityChangedNotification *notif = [note object];
+        initialReachabilityUpdate = notif.initialReachabilityUpdate;
         networkStatus = notif.reachabilityStatus;
         if (notif.prevDefaultActiveInterfaceName == nil && notif.curDefaultActiveInterfaceName == nil) {
             // no interface change
@@ -1454,6 +1483,16 @@ typedef NS_ERROR_ENUM(PsiphonTunnelErrorDomain, PsiphonTunnelErrorCode) {
         networkStatus = [currentReachability reachabilityStatus];
     }
 
+    if (!self->tunnelWholeDevice || ![self.tunneledAppDelegate respondsToSelector:@selector(resetNetworkSettings)]) {
+        // Invalidate dnsCache if it cannot be refreshed. Only applies when BindToDevice is used/supported.
+        // Note: on iOS 12.0+ NWPathMonitor which underlies DefaultRouteMonitor immediately emits a
+        // internet reachability changed notification and therefore immediately invalidates the DNS
+        // cache.
+        if (!initialReachabilityUpdate) {
+            atomic_store(&self->useDNSCache, FALSE);
+        }
+    }
+
     if ([self.tunneledAppDelegate respondsToSelector:@selector(onInternetReachabilityChanged:)]) {
         dispatch_sync(self->callbackQueue, ^{
             [self.tunneledAppDelegate onInternetReachabilityChanged:networkStatus];
@@ -1462,11 +1501,30 @@ typedef NS_ERROR_ENUM(PsiphonTunnelErrorDomain, PsiphonTunnelErrorCode) {
 
     previousNetworkStatus = atomic_exchange(&self->currentNetworkStatus, networkStatus);
 
-    // Restart if the network status or interface has changed, unless the previous status was
-    // NetworkReachabilityNotReachable, because the tunnel should be waiting for connectivity in
-    // that case.
-    if ((networkStatus != previousNetworkStatus || interfaceChanged) && previousNetworkStatus != NetworkReachabilityNotReachable) {
-        GoPsiReconnectTunnel();
+    if (networkStatus != previousNetworkStatus || interfaceChanged) {
+        // Network status or interface has changed.
+
+        if (self->tunnelWholeDevice && [self.tunneledAppDelegate respondsToSelector:@selector(resetNetworkSettings)] && !initialReachabilityUpdate) {
+
+            atomic_store(&self->resettingNetwork, TRUE);
+
+            // Restart unless the previous status was not NetworkReachabilityNotReachable, because
+            // the tunnel should be waiting for connectivity in that case.
+            if (previousNetworkStatus != NetworkReachabilityNotReachable) {
+                GoPsiReconnectTunnel();
+            }
+
+            // Trigger network settings reset if the network is reachable.
+            if (networkStatus != NetworkReachabilityNotReachable) {
+                dispatch_sync(self->callbackQueue, ^{
+                    [self.tunneledAppDelegate resetNetworkSettings];
+                });
+            }
+        } else if (previousNetworkStatus != NetworkReachabilityNotReachable) {
+            // Restart unless the previous status was not NetworkReachabilityNotReachable, because
+            // the tunnel should be waiting for connectivity in that case.
+            GoPsiReconnectTunnel();
+        }
     }
 }
 

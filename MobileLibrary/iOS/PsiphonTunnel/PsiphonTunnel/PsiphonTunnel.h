@@ -288,6 +288,11 @@ WWAN or vice versa or VPN state changed
  */
 - (void)onServerAlert:(NSString * _Nonnull)reason :(NSString * _Nonnull)subject :(NSArray * _Nonnull)actionURLs;
 
+/*!
+TODO.
+ */
+- (void)resetNetworkSettings;
+
 @end
 
 /*!
@@ -365,6 +370,16 @@ Returns the path where the rotated notices file will be created.
  Stop the tunnel (regardless of its current connection state).
  */
 - (void)stop;
+
+/*!
+ TODO.
+ */
+- (NSString*_Nonnull)resetDNSCache;
+
+/*!
+ TODO.
+ */
+- (void)networkSettingsReset;
 
 /*!
  Returns the current tunnel connection state.

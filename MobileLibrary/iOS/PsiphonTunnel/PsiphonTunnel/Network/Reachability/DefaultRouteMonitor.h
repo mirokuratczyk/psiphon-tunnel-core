@@ -40,6 +40,9 @@ NS_ASSUME_NONNULL_BEGIN
 /// Current reachability status.
 @property (nonatomic, readonly) NetworkReachability reachabilityStatus;
 
+/// TODO
+@property (nonatomic, readonly) BOOL initialReachabilityUpdate;
+
 /// Name of current default active interface. If nil, then there is no such interface.
 @property (nonatomic, nullable, readonly) NSString* curDefaultActiveInterfaceName;
 
