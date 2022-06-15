@@ -207,10 +207,7 @@ NetworkReachability nw_interface_type_network_reachability(nw_interface_type_t i
 
     NetworkPathState *newPathState = [[NetworkPathState alloc] init];
     newPathState.path = path;
-    NSString *prevDefaultActiveInterfaceName = nil;
-    if (self.pathState != nil) {
-        prevDefaultActiveInterfaceName = self.pathState.defaultActiveInterfaceName;
-    }
+    NSString *prevDefaultActiveInterfaceName = self.pathState.defaultActiveInterfaceName;
 
     nw_path_status_t status = nw_path_get_status(path);
     if (status == nw_path_status_invalid || status == nw_path_status_unsatisfied) {
