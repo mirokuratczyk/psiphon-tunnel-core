@@ -197,6 +197,11 @@ NetworkReachability nw_interface_type_network_reachability(nw_interface_type_t i
 
 - (void)pathUpdateHandler:(nw_path_t _Nonnull)path emitNotification:(BOOL)emitNotification API_AVAILABLE(macos(10.14), ios(12.0), watchos(5.0), tvos(12.0)) {
 
+    if (self.pathState.path != nil && nw_path_is_equal(self.pathState.path, path)) {
+        // Do nothing, path update was already processed.
+        return;
+    }
+
     [self log:[NSString stringWithFormat:@"new path: %@",
                [DefaultRouteMonitor pathDebugInfo:path]]];
 
