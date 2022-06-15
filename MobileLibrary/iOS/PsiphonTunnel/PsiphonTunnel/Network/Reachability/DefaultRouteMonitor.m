@@ -21,6 +21,8 @@
 #import "NetworkInterface.h"
 #import <net/if.h>
 #import <ifaddrs.h>
+#import <netdb.h>
+#import <netinet6/in6.h>
 
 @interface NetworkPathState ()
 /// See comment in DefaultRouteMonitor.h
@@ -539,7 +541,70 @@ bool sockaddr_is_equal(const struct sockaddr *addr1, const struct sockaddr *addr
                    [DefaultRouteMonitor interfaceTypeToString:nw_path_interface_type(path)],
                    nw_path_is_expensive(path), constrained, nw_path_has_ipv4(path),
                    nw_path_has_ipv6(path), nw_path_has_dns(path), unsatisfiedReason];
-    return s;
+
+
+    __block int i = 0;
+    NSMutableString *gws = [[NSMutableString alloc] init];
+    if (@available(iOS 13.0, *)) {
+        nw_path_enumerate_gateways(path, ^bool(nw_endpoint_t  _Nonnull gateway) {
+            [gws appendString:[NSString stringWithFormat:@"endpoint_%d=(%@)", i,  [DefaultRouteMonitor endpointDebugInfo:gateway]]];
+            i++;
+            return true;
+        });
+    }
+
+    nw_endpoint_t local_endpoint = nw_path_copy_effective_local_endpoint(path);
+    nw_endpoint_t remote_endpoint = nw_path_copy_effective_remote_endpoint(path);
+    NSString *localEndpoint = [NSString stringWithFormat:@"local_endpoint=(%@)", [DefaultRouteMonitor endpointDebugInfo:local_endpoint]];
+    NSString *remoteEndpoint = [NSString stringWithFormat:@"remote_endpoint=(%@)", [DefaultRouteMonitor endpointDebugInfo:remote_endpoint]];
+
+    return [NSString stringWithFormat:@"%@, %@, %@, %@", s, localEndpoint, remoteEndpoint, gws];
+}
+
++ (NSString*)endpointDebugInfo:(nw_endpoint_t)endpoint API_AVAILABLE(macos(10.14), ios(12.0), watchos(5.0), tvos(12.0)) {
+
+    NSString *url;
+    NSString *hostname;
+    NSString *addr;
+
+    if (@available(iOS 13.0, *)) {
+        const char *urlC = nw_endpoint_get_url(endpoint);
+        if (urlC != NULL) {
+            url = [NSString stringWithUTF8String:urlC];
+        } else {
+            url = @"(null)";
+        }
+    }
+    uint16_t port = nw_endpoint_get_port(endpoint);
+
+    const struct sockaddr *s_addr = nw_endpoint_get_address(endpoint);
+    if (s_addr != NULL) {
+        char addrC[NI_MAXHOST];
+        int ret = getnameinfo(s_addr,
+                              (socklen_t)s_addr->sa_len,
+                              addrC,
+                              (socklen_t)NI_MAXHOST,
+                              NULL,
+                              (socklen_t)0,
+                              NI_NUMERICHOST);
+        if (ret == 0) {
+            addr = [NSString stringWithUTF8String:addrC];
+            addr = [addr stringByReplacingOccurrencesOfString:@"." withString:@"<>"];
+            addr = [addr stringByReplacingOccurrencesOfString:@":" withString:@"<>"];
+        } else {
+            addr = [NSString stringWithFormat:@"err: getnameinfo returned %d", ret];
+        }
+
+    }
+
+    const char *hostnameC = nw_endpoint_get_hostname(endpoint);
+    if (hostnameC != NULL) {
+        hostname = [NSString stringWithUTF8String:hostnameC];
+        hostname = [hostname stringByReplacingOccurrencesOfString:@"." withString:@"<>"];
+        hostname = [hostname stringByReplacingOccurrencesOfString:@":" withString:@"<>"];
+    }
+
+    return [NSString stringWithFormat:@"addr %@, port %d, hostname %@, url %@", addr, port, hostname, url];
 }
 
 #pragma mark ReachabilityProtocol
