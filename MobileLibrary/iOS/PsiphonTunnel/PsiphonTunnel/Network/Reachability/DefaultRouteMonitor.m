@@ -197,7 +197,7 @@ NetworkReachability nw_interface_type_network_reachability(nw_interface_type_t i
 
 - (void)pathUpdateHandler:(nw_path_t _Nonnull)path emitNotification:(BOOL)emitNotification API_AVAILABLE(macos(10.14), ios(12.0), watchos(5.0), tvos(12.0)) {
 
-    if (self.pathState.path != nil && nw_path_is_equal(self.pathState.path, path)) {
+    if (self.pathState.path != nil && [DefaultRouteMonitor pathUpdateIsRedundant:self.pathState.path oldPath:path]) {
         // Do nothing, path update was already processed.
         return;
     }
@@ -279,6 +279,226 @@ NetworkReachability nw_interface_type_network_reachability(nw_interface_type_t i
     }
 }
 
++(BOOL)pathUpdateIsRedundant:(nw_path_t)newPath oldPath:(nw_path_t) oldPath API_AVAILABLE(macos(10.14), ios(12.0), watchos(5.0), tvos(12.0)) {
+    if (nw_path_is_equal(newPath, oldPath)) {
+        return TRUE;
+    }
+    // nw_path_is_equal may return FALSE even though the paths are identical when comparing all the
+    // information that can be gathered with the nw_path APIs. If this is the case, then the paths
+    // can be considered equal and the new path update is redundant.
+    return pathIsEqual(newPath, oldPath);
+}
+
+bool pathIsEqual(nw_path_t path, nw_path_t otherPath) API_AVAILABLE(macos(10.14), ios(12.0), watchos(5.0), tvos(12.0)) {
+    nw_interface_type_t interfaceType = nw_path_interface_type(path);
+    if (interfaceType != nw_path_interface_type(otherPath)) {
+        return FALSE;
+    }
+
+    // Compare path interfaces that match the active interface type
+
+    NSArray<nw_interface_t>* pathInterfaces = [DefaultRouteMonitor pathInterfaces:path withType:interfaceType];
+    NSArray<nw_interface_t>* otherPathInterfaces = [DefaultRouteMonitor pathInterfaces:otherPath withType:interfaceType];
+    if ([pathInterfaces count] != [otherPathInterfaces count]) {
+        return FALSE;
+    }
+
+    for (nw_interface_t interface in pathInterfaces) {
+        BOOL found = FALSE;
+        for (nw_interface_t otherInterface in otherPathInterfaces) {
+            if (interfaceIsEqual(interface, otherInterface)) {
+                found = TRUE;
+                break;
+            }
+        }
+        if (found == FALSE) {
+            return FALSE;
+        }
+    }
+
+    if (nw_path_get_status(path) != nw_path_get_status(otherPath) ||
+        nw_path_is_expensive(path) != nw_path_is_expensive(otherPath) ||
+        nw_path_has_ipv4(path) != nw_path_has_ipv4(otherPath) ||
+        nw_path_has_ipv6(path) != nw_path_has_ipv6(otherPath) ||
+        nw_path_has_dns(path) != nw_path_has_dns(otherPath)) {
+        return FALSE;
+    }
+
+    if (@available(iOS 13.0, *)) {
+        if (nw_path_is_constrained(path) != nw_path_is_constrained(otherPath)) {
+            return FALSE;
+        }
+    }
+
+    if (@available(iOS 14.2, *)) {
+        if (nw_path_get_unsatisfied_reason(path) != nw_path_get_unsatisfied_reason(otherPath)) {
+            return FALSE;
+        }
+    }
+
+    // Compare path gateways
+
+    if (@available(iOS 13.0, *)) {
+        NSArray<nw_endpoint_t>* pathGateways = [DefaultRouteMonitor pathGateways:path];
+        NSArray<nw_endpoint_t>* otherPathGateways = [DefaultRouteMonitor pathGateways:path];
+        if ([pathGateways count] != [otherPathGateways count]) {
+            return FALSE;
+        }
+
+        for (nw_endpoint_t gateway in pathGateways) {
+            BOOL found = FALSE;
+            for (nw_endpoint_t otherGateway in otherPathGateways) {
+                if (endpointIsEqual(gateway, otherGateway)) {
+                    found = TRUE;
+                    break;
+                }
+            }
+            if (found == FALSE) {
+                return FALSE;
+            }
+        }
+    }
+
+    // Compare endpoints
+
+    nw_endpoint_t localEndpoint = nw_path_copy_effective_local_endpoint(path);
+    nw_endpoint_t otherLocalEndpoint = nw_path_copy_effective_local_endpoint(otherPath);
+    if (localEndpoint != nil && otherLocalEndpoint != nil) {
+        if (!endpointIsEqual(localEndpoint, otherLocalEndpoint)) {
+            return FALSE;
+        }
+    } else if (localEndpoint != otherLocalEndpoint) {
+        return FALSE;
+    }
+
+    nw_endpoint_t remoteEndpoint = nw_path_copy_effective_remote_endpoint(path);
+    nw_endpoint_t otherRemoteEndpoint = nw_path_copy_effective_remote_endpoint(otherPath);
+    if (remoteEndpoint != nil && otherRemoteEndpoint != nil) {
+        if (!endpointIsEqual(remoteEndpoint, otherRemoteEndpoint)) {
+            return FALSE;
+        }
+    } else if (remoteEndpoint != otherRemoteEndpoint) {
+        return FALSE;
+    }
+
+    return TRUE;
+}
+
++ (NSArray<nw_interface_t>*)pathInterfaces:(nw_path_t)path withType:(nw_interface_type_t)interfaceType API_AVAILABLE(macos(10.14), ios(12.0), watchos(5.0), tvos(12.0)) {
+    NSMutableArray<nw_interface_t>* interfaces = [[NSMutableArray alloc] init];
+
+    nw_path_enumerate_interfaces(path, ^bool(nw_interface_t  _Nonnull interface) {
+        if (nw_interface_get_type(interface) == interfaceType) {
+            [interfaces addObject:interface];
+        }
+        // Continue searching
+        return true;
+    });
+
+    return interfaces;
+}
+
+bool interfaceIsEqual(nw_interface_t interface, nw_interface_t otherInterface) API_AVAILABLE(macos(10.14), ios(12.0), watchos(5.0), tvos(12.0)) {
+    if (nw_interface_get_index(interface) != nw_interface_get_index(otherInterface) ||
+        strcmp(nw_interface_get_name(interface), nw_interface_get_name(otherInterface)) != 0 ||
+        nw_interface_get_type(interface) != nw_interface_get_type(otherInterface)) {
+        return FALSE;
+    }
+    return TRUE;
+}
+
++ (NSArray<nw_endpoint_t>*)pathGateways:(nw_path_t)path API_AVAILABLE(macos(10.15), ios(13.0), watchos(6.0), tvos(13.0)) {
+
+    NSMutableArray<nw_endpoint_t>* gateways = [[NSMutableArray alloc] init];
+
+    nw_path_enumerate_gateways(path, ^bool(nw_endpoint_t  _Nonnull gateway) {
+        [gateways addObject:gateway];
+        // Continue searching
+        return TRUE;
+    });
+
+    return gateways;
+}
+
+bool endpointIsEqual(nw_endpoint_t _Nonnull endpoint, nw_endpoint_t _Nonnull otherEndpoint) API_AVAILABLE(macos(10.14), ios(12.0), watchos(5.0), tvos(12.0)) {
+
+    nw_endpoint_type_t endpoint_type = nw_endpoint_get_type(endpoint);
+    if (endpoint_type != nw_endpoint_get_type(otherEndpoint)) {
+        return FALSE;
+    }
+
+    if (endpoint_type == nw_endpoint_type_url) {
+        if (strcmp(nw_endpoint_get_hostname(endpoint), nw_endpoint_get_hostname(otherEndpoint)) != 0 ||
+            nw_endpoint_get_port(endpoint) != nw_endpoint_get_port(otherEndpoint)) {
+            return FALSE;
+        }
+        if (@available(iOS 13.0, *)) {
+            if (strcmp(nw_endpoint_get_url(endpoint), nw_endpoint_get_url(otherEndpoint)) != 0) {
+                return FALSE;
+            }
+        }
+    } else if (endpoint_type == nw_endpoint_type_host) {
+        if (strcmp(nw_endpoint_get_hostname(endpoint), nw_endpoint_get_hostname(otherEndpoint)) != 0 ||
+            nw_endpoint_get_port(endpoint) != nw_endpoint_get_port(otherEndpoint)) {
+            return FALSE;
+        }
+    } else if (endpoint_type == nw_endpoint_type_address) {
+        if (strcmp(nw_endpoint_get_hostname(endpoint), nw_endpoint_get_hostname(otherEndpoint)) != 0 ||
+            nw_endpoint_get_port(endpoint) != nw_endpoint_get_port(otherEndpoint)) {
+            return FALSE;
+        }
+
+        const struct sockaddr *addr1 = nw_endpoint_get_address(endpoint);
+        const struct sockaddr *addr2 = nw_endpoint_get_address(otherEndpoint);
+        if (!sockaddr_is_equal(addr1, addr2)) {
+            return FALSE;
+        }
+    } else if (endpoint_type == nw_endpoint_type_bonjour_service) {
+        if (strcmp(nw_endpoint_get_bonjour_service_type(endpoint), nw_endpoint_get_bonjour_service_type(otherEndpoint)) != 0 ||
+            strcmp(nw_endpoint_get_bonjour_service_name(endpoint), nw_endpoint_get_bonjour_service_name(otherEndpoint)) != 0 ||
+            strcmp(nw_endpoint_get_bonjour_service_domain(endpoint), nw_endpoint_get_bonjour_service_domain(otherEndpoint)) != 0) {
+            return FALSE;
+        }
+    } else if (endpoint_type == nw_endpoint_type_invalid) {
+        // Nothing to compare. Assume endpoints differ.
+        return FALSE;
+    }
+
+    return TRUE;
+}
+
+bool sockaddr_is_equal(const struct sockaddr *addr1, const struct sockaddr *addr2) {
+    if (addr1 != NULL && addr2 != NULL) {
+        if (addr1->sa_family != addr2->sa_family ||
+            addr1->sa_len != addr2->sa_len) {
+            return FALSE;
+        }
+        if (addr1->sa_family == AF_INET) {
+            struct sockaddr_in *addr1_in = (struct sockaddr_in*)addr1;
+            struct sockaddr_in *addr2_in = (struct sockaddr_in*)addr2;
+            if (!IN_ARE_ADDR_EQUAL(&addr1_in->sin_addr, &addr2_in->sin_addr) ||
+                addr1_in->sin_port != addr2_in->sin_port) {
+                return FALSE;
+            }
+        } else if (addr1->sa_family == AF_INET6) {
+            struct sockaddr_in6 *addr1_in6 = (struct sockaddr_in6*)addr1;
+            struct sockaddr_in6 *addr2_in6 = (struct sockaddr_in6*)addr2;
+            if (!IN6_ARE_ADDR_EQUAL(&addr1_in6->sin6_addr, &addr2_in6->sin6_addr) ||
+                addr1_in6->sin6_port != addr2_in6->sin6_port ||
+                addr1_in6->sin6_flowinfo != addr2_in6->sin6_flowinfo ||
+                addr1_in6->sin6_scope_id != addr2_in6 ->sin6_scope_id) {
+                return FALSE;
+            }
+        } else {
+            // Unsupported. Assume endpoints differ.
+            return FALSE;
+        }
+    } else {
+        return addr1 == addr2;
+    }
+    return TRUE;
+}
+
 + (NSString*)pathDebugInfo:(nw_path_t)path API_AVAILABLE(macos(10.14), ios(12.0), watchos(5.0), tvos(12.0)) {
 
     if (path == nil) {
@@ -306,23 +526,6 @@ NetworkReachability nw_interface_type_network_reachability(nw_interface_type_t i
         }
     }
 
-    nw_interface_type_t active_interface_type = nw_interface_type_other;
-    if (nw_path_uses_interface_type(path, nw_interface_type_wifi)) {
-        active_interface_type = nw_interface_type_wifi;
-    } else if (nw_path_uses_interface_type(path, nw_interface_type_cellular)) {
-        active_interface_type = nw_interface_type_cellular;
-    } else if (nw_path_uses_interface_type(path, nw_interface_type_wired)) {
-        active_interface_type = nw_interface_type_wired;
-    } else if (nw_path_uses_interface_type(path, nw_interface_type_loopback)) {
-        active_interface_type = nw_interface_type_loopback;
-    } else {
-        active_interface_type = nw_interface_type_other;
-    }
-
-    // Note: could log nw_endpoint_t information with
-    // nw_path_copy_effective_local_endpoint and nw_path_enumerate_gateways
-    // but could contain PII — more investigation required, but logging
-    // endpoint type may be safe.
     NSString *s = [NSString stringWithFormat:
                    @"status %@, "
                    "active_interface_type %@, "
@@ -333,7 +536,7 @@ NetworkReachability nw_interface_type_network_reachability(nw_interface_type_t i
                    "path_has_dns %d, "
                    "unsatisfied_reason %@",
                    [DefaultRouteMonitor pathStatusToString:nw_path_get_status(path)],
-                   [DefaultRouteMonitor interfaceTypeToString:active_interface_type],
+                   [DefaultRouteMonitor interfaceTypeToString:nw_path_interface_type(path)],
                    nw_path_is_expensive(path), constrained, nw_path_has_ipv4(path),
                    nw_path_has_ipv6(path), nw_path_has_dns(path), unsatisfiedReason];
     return s;
