@@ -1,8 +1,8 @@
 main: libpsiphontunnel.so main.o
-	gcc -I. -o main main.o -L. -lpsiphontunnel
+	clang -I. -o main main.o -L. -lpsiphontunnel -framework IOKit -framework CoreFoundation
 
-main.o: main.c
-	gcc -I.. -c main.c
+main.o: main.mm
+	clang -I.. -c main.mm
 
 libpsiphontunnel.so: ../PsiphonTunnel.go
 	# At this time, we don't support modules
