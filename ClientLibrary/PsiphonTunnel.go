@@ -43,6 +43,8 @@ import (
 	"unsafe"
 
 	"github.com/Psiphon-Labs/psiphon-tunnel-core/ClientLibrary/clientlib"
+	"github.com/Psiphon-Labs/psiphon-tunnel-core/psiphon"
+	"github.com/Psiphon-Labs/psiphon-tunnel-core/psiphon/common"
 	"github.com/Psiphon-Labs/psiphon-tunnel-core/psiphon/common/errors"
 )
 
@@ -255,6 +257,24 @@ func PsiphonTunnelStop() {
 	if tunnel != nil {
 		tunnel.Stop()
 	}
+}
+
+//export PsiphonWriteRuntimeProfiles
+//
+// PsiphonWriteRuntimeProfiles writes Go runtime profile information to a set of
+// files in the specified output directory. The profiles include "heap",
+// "goroutine", and other selected profiles from:
+// https://golang.org/pkg/runtime/pprof/#Profile.
+func PsiphonWriteRuntimeProfiles(cOutputDirectory *C.char) {
+	outputDirectory := []byte(C.GoString(cOutputDirectory))
+	psiphon.NoticeInfo("write profiles")
+	profileSampleDurationSeconds := 5
+	common.WriteRuntimeProfiles(
+		psiphon.NoticeCommonLogger(),
+		string(outputDirectory),
+		"",
+		profileSampleDurationSeconds,
+		profileSampleDurationSeconds)
 }
 
 // marshalStartResult serializes a startResult object as a JSON string in the form
