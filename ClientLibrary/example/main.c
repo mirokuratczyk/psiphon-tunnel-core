@@ -75,6 +75,9 @@ int main(int argc, char *argv[]) {
         // print results
         printf("Result: %s\n", result);
 
+        // write runtime profiles
+        PsiphonWriteRuntimeProfiles(params.dataRootDirectory);
+
         // The underlying memory of `result` is managed by PsiphonTunnel and is freed in Stop
         PsiphonTunnelStop();
     }
