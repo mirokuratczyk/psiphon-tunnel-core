@@ -28,6 +28,7 @@ import (
 	"sync"
 
 	"github.com/Psiphon-Labs/psiphon-tunnel-core/psiphon"
+	"github.com/Psiphon-Labs/psiphon-tunnel-core/psiphon/common"
 	"github.com/Psiphon-Labs/psiphon-tunnel-core/psiphon/common/errors"
 )
 
@@ -308,16 +309,30 @@ func StartTunnel(
 		}
 	}()
 
+	// writeProfilesSignal is nil and non-functional on Windows
+	writeProfilesSignal := makeSIGUSR2Channel()
+
 	// Wait for an active tunnel or error
-	select {
-	case <-connected:
-		return tunnel, nil
-	case err := <-errored:
-		tunnel.Stop()
-		if err != ErrTimeout {
-			err = errors.TraceMsg(err, "tunnel start produced error")
+	for {
+		select {
+		case <-writeProfilesSignal:
+			psiphon.NoticeInfo("write profiles")
+			profileSampleDurationSeconds := 5
+			common.WriteRuntimeProfiles(
+				psiphon.NoticeCommonLogger(),
+				config.DataRootDirectory,
+				"",
+				profileSampleDurationSeconds,
+				profileSampleDurationSeconds)
+		case <-connected:
+			return tunnel, nil
+		case err := <-errored:
+			tunnel.Stop()
+			if err != ErrTimeout {
+				err = errors.TraceMsg(err, "tunnel start produced error")
+			}
+			return nil, err
 		}
-		return nil, err
 	}
 }
 
