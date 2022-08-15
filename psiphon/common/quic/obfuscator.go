@@ -85,8 +85,6 @@ const (
 	NONCE_SIZE = 12
 
 	RANDOM_STREAM_LIMIT = 1<<38 - 64
-
-	UDP_PACKET_WRITE_TIMEOUT = 1 * time.Second
 )
 
 // ObfuscatedPacketConn wraps a QUIC net.PacketConn with an obfuscation layer
@@ -648,20 +646,6 @@ func (conn *ObfuscatedPacketConn) writePacket(
 				break
 			}
 		}
-	}
-
-	// Generally, a UDP packet write doesn't block. However, Go's
-	// internal/poll.FD.WriteMsg continues to loop when syscall.SendmsgN
-	// fails with EAGAIN, which indicates that an OS socket buffer is
-	// currently full; in certain OS states this may cause WriteMsgUDP to
-	// block indefinitely. In this scenario, we want to instead behave as if
-	// the packet were dropped, so we set a write deadline which will
-	// eventually interrupt any EAGAIN loop. Note that quic-go manages read
-	// deadlines; we set only the write deadline here.
-
-	err := conn.SetWriteDeadline(time.Now().Add(UDP_PACKET_WRITE_TIMEOUT))
-	if err != nil {
-		return 0, 0, errors.Trace(err)
 	}
 
 	_, oobn, err := conn.OOBCapablePacketConn.WriteMsgUDP(p, oob, addr)
