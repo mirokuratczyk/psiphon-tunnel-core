@@ -72,6 +72,45 @@ echo " Gomobile version: ${GOMOBILEVERSION}"
 echo " Dependencies: ${DEPENDENCIES}"
 echo ""
 
+# Hack initial reservation size
+
+echo "Hacking malloc.go for 32-bit builds..."
+cp $GOROOT/src/runtime/malloc.go $GOROOT/src/runtime/malloc.go.old
+
+# Reserve 0 meta arena memory
+# sed -i -e 's/meta := uintptr(sysReserve(nil, arenaMetaSize))/var meta uintptr = 0/g' $GOROOT/src/runtime/malloc.go
+
+# Only reserve 32 << 20 arena, comments out other arena sizes
+sed -i -e 's/512 << 20/\/\/512 << 20/g' $GOROOT/src/runtime/malloc.go
+sed -i -e 's/256 << 20/\/\/256 << 20/g' $GOROOT/src/runtime/malloc.go
+sed -i -e 's/128 << 20/32 << 20/g' $GOROOT/src/runtime/malloc.go
+
+# Allocate 4GB arena size
+# sed -i -e 's/512 << 20/(2 << 31)-1/g' $GOROOT/src/runtime/malloc.go
+
+# Print log if sysreserve fails
+#sed -i -e 's/return nil, 0/print("sysreserve failed")\nreturn nil, 0/g' $GOROOT/src/runtime/malloc.go
+
+# Print log if sysReserveAligned succeeds
+#sed -i -e 's/mheap_.arena.init(uintptr(a), size, false)/print("sysReserveAligned succeeded")\nmheap_.arena.init(uintptr(a), size, false)/g' $GOROOT/src/runtime/malloc.go
+
+# Print arenaMetaSize with panic (print doesn't seem to print to logcat)
+# sed -i -e 's/procBrk := sbrk0()/panic(arenaMetaSize)\nprocBrk := sbrk0()/g' $GOROOT/src/runtime/malloc.go
+
+# Panic if failed to reserve memory for arena
+# sed -i -e 's/a, size := sysReserveAligned(unsafe.Pointer(p), arenaSize, heapArenaBytes)/a, size := sysReserveAligned(unsafe.Pointer(p), arenaSize, heapArenaBytes)\nif a == nil {panic("sysReserveAligned failed")}/g' $GOROOT/src/runtime/malloc.go
+
+# Print arenaMetaSize and arenaBits
+# sed -i -e 's/procBrk := sbrk0()/print("arenaMetaSize(",arenaMetaSize,"), arenaBits(", arenaBits, ")")\nprocBrk := sbrk0()/g' $GOROOT/src/runtime/malloc.go
+
+# Panic if arenaMetaSize reserved successfully
+# sed -i -e 's/if meta != 0 {/if meta != 0 {\npanic("arenaMetaSize reserved")/g' $GOROOT/src/runtime/malloc.go
+
+# Trigger panic. Uncomment as check to ensure we're running the changes.
+# sed -i -e 's/procBrk := sbrk0()/print("panic")\npanic("done")\nprocBrk := sbrk0()/g' $GOROOT/src/runtime/malloc.go
+
+cat $GOROOT/src/runtime/malloc.go
+
 gomobile bind -v -x -target=android/arm,android/arm64,android/386,android/amd64 -tags="${BUILD_TAGS}" -ldflags="$LDFLAGS" github.com/Psiphon-Labs/psiphon-tunnel-core/MobileLibrary/psi
 if [ $? != 0 ]; then
   echo "..'gomobile bind' failed, exiting"
