@@ -176,7 +176,7 @@ rm -rf "${BUILD_DIR}"
 # Builds Psi.xcframework
 #
 IOS_PSI_FRAMEWORK=""
-gomobile_build_for_platform "ios" IOS_PSI_FRAMEWORK
+gomobile_build_for_platform "ios,iossimulator" IOS_PSI_FRAMEWORK
 
 echo "$IOS_PSI_FRAMEWORK"
 
@@ -232,7 +232,7 @@ STRIP_BITCODE_FROM_COPIED_FILES="NO" \
 BUILD_LIBRARY_FOR_DISTRIBUTION="YES" \
 ONLY_ACTIVE_ARCH="NO" \
 SKIP_INSTALL="NO" \
-EXCLUDED_ARCHS="arm64 i386"
+EXCLUDED_ARCHS="i386"
 
 #
 # Bundling the generated frameworks into a single PsiphonTunnel.xcframework
