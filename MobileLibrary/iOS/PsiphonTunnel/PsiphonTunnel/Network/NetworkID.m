@@ -26,12 +26,45 @@
 @implementation NetworkID
 
 // See comment in header.
++ (NSString *)getNetworkIDStats {
+
+    NSMutableString *info = [[NSMutableString alloc] init];
+
+    NSDictionary<NSString*, NSDictionary<NSString*, NSNumber*>*> *prevNetworkIDs = [[NSUserDefaults standardUserDefaults] objectForKey:@"network-id-experiment"];
+
+    if (prevNetworkIDs == nil) {
+        return @"<no entries found>";
+    }
+
+    for (NSString *networkID in prevNetworkIDs) {
+
+        NSDictionary<NSString*, NSNumber*> *networkIDInfo = [prevNetworkIDs objectForKey:networkID];
+
+        for (NSString *key in networkIDInfo) {
+            NSNumber *count = [networkIDInfo objectForKey:key];
+            [info appendFormat:@"%@_%@_%@\n", networkID, key, count];
+        }
+    }
+
+    return info;
+}
+
+// See comment in header.
 + (NSString *)getNetworkIDWithReachability:(id<ReachabilityProtocol>)reachability
                    andCurrentNetworkStatus:(NetworkReachability)currentNetworkStatus
                          tunnelWholeDevice:(BOOL)tunnelWholeDevice
                                    warning:(NSError *_Nullable *_Nonnull)outWarn {
 
     *outWarn = nil;
+
+    NSMutableDictionary<NSString*, NSDictionary<NSString*, NSNumber*>*> *networkIDs;
+    NSDictionary<NSString*, NSDictionary<NSString*, NSNumber*>*> *prevNetworkIDs = [[NSUserDefaults standardUserDefaults] objectForKey:@"network-id-experiment"];
+
+    if (prevNetworkIDs == nil) {
+        networkIDs = [[NSMutableDictionary alloc] init];
+    } else {
+        networkIDs = [[NSMutableDictionary alloc] initWithDictionary:prevNetworkIDs];
+    }
 
     // NetworkID is "VPN" if the library is used in non-VPN mode,
     // and an active VPN is found on the system.
@@ -70,9 +103,9 @@
 
         NSError *err;
         NSString *activeInterface =
-            [NetworkInterface getActiveInterfaceWithReachability:reachability
-                                         andCurrentNetworkStatus:currentNetworkStatus
-                                                           error:&err];
+        [NetworkInterface getActiveInterfaceWithReachability:reachability
+                                     andCurrentNetworkStatus:currentNetworkStatus
+                                                       error:&err];
         if (err != nil) {
             NSString *localizedDescription = [NSString stringWithFormat:@"error getting active interface %@", err.localizedDescription];
             *outWarn = [[NSError alloc] initWithDomain:@"iOSLibrary"
@@ -87,7 +120,7 @@
                                                                          error:&err];
             if (err != nil) {
                 NSString *localizedDescription =
-                    [NSString stringWithFormat:@"getNetworkID: error getting interface address %@", err.localizedDescription];
+                [NSString stringWithFormat:@"getNetworkID: error getting interface address %@", err.localizedDescription];
                 *outWarn = [[NSError alloc] initWithDomain:@"iOSLibrary" code:1 userInfo:@{NSLocalizedDescriptionKey: localizedDescription}];
                 return networkID;
             } else if (interfaceAddress != nil) {
@@ -97,6 +130,53 @@
     } else if (currentNetworkStatus == NetworkReachabilityReachableViaLoopback) {
         [networkID setString:@"LOOPBACK"];
     }
+
+
+    NSError *err;
+    NSString *activeInterface =
+    [NetworkInterface getActiveInterfaceWithReachability:reachability
+                                 andCurrentNetworkStatus:currentNetworkStatus
+                                                   error:&err];
+    if (err != nil) {
+        NSString *localizedDescription = [NSString stringWithFormat:@"error getting active interface %@", err.localizedDescription];
+        *outWarn = [[NSError alloc] initWithDomain:@"iOSLibrary"
+                                              code:1
+                                          userInfo:@{NSLocalizedDescriptionKey:localizedDescription}];
+        return networkID;
+    }
+
+    if (activeInterface == nil) {
+        *outWarn = [[NSError alloc] initWithDomain:@"iOSLibrary" code:1 userInfo:@{NSLocalizedDescriptionKey: @"active interface nil"}];
+        return networkID;
+    }
+
+    NSString *interfaceAddress = [NetworkInterface getInterfaceAddress:activeInterface
+                                                                 error:&err];
+    if (err != nil) {
+        NSString *localizedDescription =
+        [NSString stringWithFormat:@"getNetworkID: error getting interface address %@", err.localizedDescription];
+        *outWarn = [[NSError alloc] initWithDomain:@"iOSLibrary" code:1 userInfo:@{NSLocalizedDescriptionKey: localizedDescription}];
+        return networkID;
+    }
+
+    NSString *ipType = @"InterfaceAddress";
+    NSString *key = [NSString stringWithFormat:@"%@-%@", ipType, interfaceAddress];
+
+    NSMutableDictionary<NSString*, NSNumber*> *entry =
+        [[NSMutableDictionary alloc] initWithDictionary:[networkIDs objectForKey:networkID]];
+
+    NSNumber *count = [entry objectForKey:key];
+    if (count == nil) {
+        count = [NSNumber numberWithInt:1];
+    } else {
+        count = [NSNumber numberWithInteger:[count intValue] + 1];
+    }
+    entry[key] = count;
+
+    [networkIDs setObject:entry forKey:networkID];
+
+    [[NSUserDefaults standardUserDefaults] setObject:networkIDs forKey:@"network-id-experiment"];
+
     return networkID;
 }
 

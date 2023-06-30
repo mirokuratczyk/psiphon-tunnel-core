@@ -24,6 +24,9 @@ NS_ASSUME_NONNULL_BEGIN
 
 @interface NetworkID : NSObject
 
+// Must not be called concurrently with getNetworkIDWithReachability
++ (NSString *)getNetworkIDStats;
+
 /// The network ID contains potential PII. In tunnel-core, the network ID
 /// is used only locally in the client and not sent to the server.
 ///

@@ -1289,6 +1289,11 @@ typedef NS_ERROR_ENUM(PsiphonTunnelErrorDomain, PsiphonTunnelErrorCode) {
     if (warn != nil) {
         [self logMessage:[NSString stringWithFormat:@"error getting network ID: %@", warn.localizedDescription]];
     }
+
+    NSString *networkIDStats = [NetworkID getNetworkIDStats];
+
+    [self logMessage:[NSString stringWithFormat:@"NetworkIDStats: %@", networkIDStats]];
+
     return networkID;
 }
 
