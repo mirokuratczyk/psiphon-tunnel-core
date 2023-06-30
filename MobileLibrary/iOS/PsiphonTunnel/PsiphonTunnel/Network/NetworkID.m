@@ -22,31 +22,34 @@
 #import <CoreTelephony/CTTelephonyNetworkInfo.h>
 #import <CoreTelephony/CTCarrier.h>
 #import <SystemConfiguration/CaptiveNetwork.h>
+#import "../json-framework/SBJson4.h"
 
 @implementation NetworkID
 
 // See comment in header.
 + (NSString *)getNetworkIDStats {
 
-    NSMutableString *info = [[NSMutableString alloc] init];
+    NSDictionary<NSString*, NSDictionary<NSString*, NSNumber*>*> *networkIDStats = [[NSUserDefaults standardUserDefaults] objectForKey:@"network-id-experiment"];
 
-    NSDictionary<NSString*, NSDictionary<NSString*, NSNumber*>*> *prevNetworkIDs = [[NSUserDefaults standardUserDefaults] objectForKey:@"network-id-experiment"];
-
-    if (prevNetworkIDs == nil) {
+    if (networkIDStats == nil) {
         return @"<no entries found>";
     }
 
-    for (NSString *networkID in prevNetworkIDs) {
+    return [[[SBJson4Writer alloc] init] stringWithObject:networkIDStats];
 
-        NSDictionary<NSString*, NSNumber*> *networkIDInfo = [prevNetworkIDs objectForKey:networkID];
-
-        for (NSString *key in networkIDInfo) {
-            NSNumber *count = [networkIDInfo objectForKey:key];
-            [info appendFormat:@"%@_%@_%@\n", networkID, key, count];
-        }
-    }
-
-    return info;
+//    NSMutableString *info = [[NSMutableString alloc] init];
+//
+//    for (NSString *networkID in prevNetworkIDs) {
+//
+//        NSDictionary<NSString*, NSNumber*> *networkIDInfo = [prevNetworkIDs objectForKey:networkID];
+//
+//        for (NSString *key in networkIDInfo) {
+//            NSNumber *count = [networkIDInfo objectForKey:key];
+//            [info appendFormat:@"%@_%@: %@\n", networkID, key, count];
+//        }
+//    }
+//
+//    return info;
 }
 
 // See comment in header.
