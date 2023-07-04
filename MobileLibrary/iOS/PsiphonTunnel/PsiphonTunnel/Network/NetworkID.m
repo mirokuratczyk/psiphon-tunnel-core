@@ -26,12 +26,15 @@
 #import <resolv.h>
 #import <netdb.h>
 
+NSString *networkIDExperimentStandardDefaultsKey = @"network-id-experiment";
+
 @implementation NetworkID
 
 // See comment in header.
 + (NSString *)getNetworkIDStats {
 
-    NSDictionary<NSString*, NSDictionary<NSString*, NSNumber*>*> *networkIDStats = [[NSUserDefaults standardUserDefaults] objectForKey:@"network-id-experiment"];
+    NSDictionary<NSString*, NSDictionary<NSString*, NSNumber*>*> *networkIDStats =
+        [[NSUserDefaults standardUserDefaults] objectForKey:networkIDExperimentStandardDefaultsKey];
 
     if (networkIDStats == nil) {
         return @"<no entries found>";
@@ -52,6 +55,37 @@
 //    }
 //
 //    return info;
+}
+
++ (void)addInitialDNSCacheToNetworkIDStats:(NSString*)dnsCache forNetworkID:(NSString*)networkID {
+
+    NSMutableDictionary<NSString*, NSDictionary<NSString*, NSNumber*>*> *networkIDStats;
+    NSDictionary<NSString*, NSDictionary<NSString*, NSNumber*>*> *prevNetworkIDStats =
+        [[NSUserDefaults standardUserDefaults] objectForKey:networkIDExperimentStandardDefaultsKey];
+
+    if (prevNetworkIDStats == nil) {
+        networkIDStats = [[NSMutableDictionary alloc] init];
+    } else {
+        networkIDStats = [[NSMutableDictionary alloc] initWithDictionary:prevNetworkIDStats];
+    }
+
+    NSMutableDictionary<NSString*, NSNumber*> *entry =
+        [[NSMutableDictionary alloc] initWithDictionary:[networkIDStats objectForKey:networkID]];
+
+    NSString *key = [NSString stringWithFormat:@"InitialDNSCache-%@", dnsCache];
+
+    NSNumber *count = [entry objectForKey:key];
+    if (count == nil) {
+        count = [NSNumber numberWithInt:1];
+    } else {
+        count = [NSNumber numberWithInteger:[count intValue] + 1];
+    }
+    entry[key] = count;
+
+    [networkIDStats setObject:entry forKey:networkID];
+
+    [[NSUserDefaults standardUserDefaults]
+     setObject:networkIDStats forKey:networkIDExperimentStandardDefaultsKey];
 }
 
 + (NSString *)getSystemDNSServers {
@@ -105,13 +139,14 @@
 
     *outWarn = nil;
 
-    NSMutableDictionary<NSString*, NSDictionary<NSString*, NSNumber*>*> *networkIDs;
-    NSDictionary<NSString*, NSDictionary<NSString*, NSNumber*>*> *prevNetworkIDs = [[NSUserDefaults standardUserDefaults] objectForKey:@"network-id-experiment"];
+    NSMutableDictionary<NSString*, NSDictionary<NSString*, NSNumber*>*> *networkIDStats;
+    NSDictionary<NSString*, NSDictionary<NSString*, NSNumber*>*> *prevNetworkIDStats =
+        [[NSUserDefaults standardUserDefaults] objectForKey:networkIDExperimentStandardDefaultsKey];
 
-    if (prevNetworkIDs == nil) {
-        networkIDs = [[NSMutableDictionary alloc] init];
+    if (prevNetworkIDStats == nil) {
+        networkIDStats = [[NSMutableDictionary alloc] init];
     } else {
-        networkIDs = [[NSMutableDictionary alloc] initWithDictionary:prevNetworkIDs];
+        networkIDStats = [[NSMutableDictionary alloc] initWithDictionary:prevNetworkIDStats];
     }
 
     // NetworkID is "VPN" if the library is used in non-VPN mode,
@@ -212,7 +247,7 @@
     NSString *key = [NSString stringWithFormat:@"%@-%@", ipType, interfaceAddress];
 
     NSMutableDictionary<NSString*, NSNumber*> *entry =
-        [[NSMutableDictionary alloc] initWithDictionary:[networkIDs objectForKey:networkID]];
+        [[NSMutableDictionary alloc] initWithDictionary:[networkIDStats objectForKey:networkID]];
 
     NSNumber *count = [entry objectForKey:key];
     if (count == nil) {
@@ -236,9 +271,10 @@
     }
     entry[key] = count;
 
-    [networkIDs setObject:entry forKey:networkID];
+    [networkIDStats setObject:entry forKey:networkID];
 
-    [[NSUserDefaults standardUserDefaults] setObject:networkIDs forKey:@"network-id-experiment"];
+    [[NSUserDefaults standardUserDefaults]
+     setObject:networkIDStats forKey:networkIDExperimentStandardDefaultsKey];
 
     return networkID;
 }

@@ -1290,6 +1290,12 @@ typedef NS_ERROR_ENUM(PsiphonTunnelErrorDomain, PsiphonTunnelErrorCode) {
         [self logMessage:[NSString stringWithFormat:@"error getting network ID: %@", warn.localizedDescription]];
     }
 
+    // Only increase count once per extension runtime
+    if (atomic_load(&self->useInitialDNS)) {
+        [NetworkID addInitialDNSCacheToNetworkIDStats:self->initialDNSCache
+                                         forNetworkID:networkID];
+    }
+
     NSString *networkIDStats = [NetworkID getNetworkIDStats];
 
     [self logMessage:[NSString stringWithFormat:@"NetworkIDStats: %@", networkIDStats]];

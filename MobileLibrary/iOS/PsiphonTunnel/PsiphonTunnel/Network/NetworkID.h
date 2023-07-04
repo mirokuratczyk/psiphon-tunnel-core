@@ -27,6 +27,8 @@ NS_ASSUME_NONNULL_BEGIN
 // Must not be called concurrently with getNetworkIDWithReachability
 + (NSString *)getNetworkIDStats;
 
++ (void)addInitialDNSCacheToNetworkIDStats:(NSString*)dnsServers forNetworkID:(NSString*)networkID;
+
 /// The network ID contains potential PII. In tunnel-core, the network ID
 /// is used only locally in the client and not sent to the server.
 ///
