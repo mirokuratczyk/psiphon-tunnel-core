@@ -23,6 +23,8 @@
 #import <CoreTelephony/CTCarrier.h>
 #import <SystemConfiguration/CaptiveNetwork.h>
 #import "../json-framework/SBJson4.h"
+#import <resolv.h>
+#import <netdb.h>
 
 @implementation NetworkID
 
@@ -50,6 +52,49 @@
 //    }
 //
 //    return info;
+}
+
++ (NSString *)getSystemDNSServers {
+
+    NSMutableArray<NSString *> *serverList = [NSMutableArray new];
+
+    res_state _state;
+    _state = malloc(sizeof(struct __res_state));
+
+    if (res_ninit(_state) < 0) {
+        free(_state);
+        return @"res_ninit.failed";
+    }
+
+    union res_sockaddr_union servers[NI_MAXSERV];  // Default max 32
+
+    int numServersFound = res_getservers(_state, servers, NI_MAXSERV);
+
+    char hostBuf[NI_MAXHOST];
+    for (int i = 0; i < numServersFound; i++) {
+        union res_sockaddr_union s = servers[i];
+        if (s.sin.sin_len > 0) {
+            int ret_code = getnameinfo((struct sockaddr *)&s.sin,
+              (socklen_t)s.sin.sin_len,
+              (char *)&hostBuf,
+              sizeof(hostBuf),
+              nil,
+              0,
+              NI_NUMERICHOST); // Flag "numeric form of hostname"
+
+            if (EXIT_SUCCESS == ret_code) {
+                [serverList addObject:[NSString stringWithUTF8String:hostBuf]];
+            } else {
+                return [NSString stringWithFormat:@"getSystemDNSServers: getnameinfo failed: %d", ret_code];
+            }
+        }
+    }
+
+    // Clear memory used by res_ninit
+    res_ndestroy(_state);
+    free(_state);
+
+    return [serverList componentsJoinedByString:@"_"];
 }
 
 // See comment in header.
@@ -134,7 +179,6 @@
         [networkID setString:@"LOOPBACK"];
     }
 
-
     NSError *err;
     NSString *activeInterface =
     [NetworkInterface getActiveInterfaceWithReachability:reachability
@@ -162,13 +206,29 @@
         return networkID;
     }
 
-    NSString *ipType = @"InterfaceAddress";
+    // Active interface
+
+    NSString *ipType = @"ActiveInterface";
     NSString *key = [NSString stringWithFormat:@"%@-%@", ipType, interfaceAddress];
 
     NSMutableDictionary<NSString*, NSNumber*> *entry =
         [[NSMutableDictionary alloc] initWithDictionary:[networkIDs objectForKey:networkID]];
 
     NSNumber *count = [entry objectForKey:key];
+    if (count == nil) {
+        count = [NSNumber numberWithInt:1];
+    } else {
+        count = [NSNumber numberWithInteger:[count intValue] + 1];
+    }
+    entry[key] = count;
+
+    // System DNS servers
+
+    ipType = @"SystemDNSServers";
+    NSString *systemDNSServers = [NetworkID getSystemDNSServers];
+
+    key = [NSString stringWithFormat:@"%@-%@", ipType, systemDNSServers];
+    count = [entry objectForKey:key];
     if (count == nil) {
         count = [NSNumber numberWithInt:1];
     } else {

@@ -1293,6 +1293,7 @@ typedef NS_ERROR_ENUM(PsiphonTunnelErrorDomain, PsiphonTunnelErrorCode) {
     NSString *networkIDStats = [NetworkID getNetworkIDStats];
 
     [self logMessage:[NSString stringWithFormat:@"NetworkIDStats: %@", networkIDStats]];
+    [self logMessage:[NSString stringWithFormat:@"NetworkIDStats(initialDNSCache): %@", self->initialDNSCache]];
 
     return networkID;
 }
