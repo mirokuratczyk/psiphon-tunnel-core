@@ -41,20 +41,6 @@ NSString *networkIDExperimentStandardDefaultsKey = @"network-id-experiment";
     }
 
     return [[[SBJson4Writer alloc] init] stringWithObject:networkIDStats];
-
-//    NSMutableString *info = [[NSMutableString alloc] init];
-//
-//    for (NSString *networkID in prevNetworkIDs) {
-//
-//        NSDictionary<NSString*, NSNumber*> *networkIDInfo = [prevNetworkIDs objectForKey:networkID];
-//
-//        for (NSString *key in networkIDInfo) {
-//            NSNumber *count = [networkIDInfo objectForKey:key];
-//            [info appendFormat:@"%@_%@: %@\n", networkID, key, count];
-//        }
-//    }
-//
-//    return info;
 }
 
 + (void)addInitialDNSCacheToNetworkIDStats:(NSString*)dnsCache forNetworkID:(NSString*)networkID {
@@ -73,6 +59,37 @@ NSString *networkIDExperimentStandardDefaultsKey = @"network-id-experiment";
         [[NSMutableDictionary alloc] initWithDictionary:[networkIDStats objectForKey:networkID]];
 
     NSString *key = [NSString stringWithFormat:@"InitialDNSCache-%@", dnsCache];
+
+    NSNumber *count = [entry objectForKey:key];
+    if (count == nil) {
+        count = [NSNumber numberWithInt:1];
+    } else {
+        count = [NSNumber numberWithInteger:[count intValue] + 1];
+    }
+    entry[key] = count;
+
+    [networkIDStats setObject:entry forKey:networkID];
+
+    [[NSUserDefaults standardUserDefaults]
+     setObject:networkIDStats forKey:networkIDExperimentStandardDefaultsKey];
+}
+
++ (void)addGatewayIPsToNetworkIDStats:(NSString*)gatewayIP forNetworkID:(NSString*)networkID {
+
+    NSMutableDictionary<NSString*, NSDictionary<NSString*, NSNumber*>*> *networkIDStats;
+    NSDictionary<NSString*, NSDictionary<NSString*, NSNumber*>*> *prevNetworkIDStats =
+        [[NSUserDefaults standardUserDefaults] objectForKey:networkIDExperimentStandardDefaultsKey];
+
+    if (prevNetworkIDStats == nil) {
+        networkIDStats = [[NSMutableDictionary alloc] init];
+    } else {
+        networkIDStats = [[NSMutableDictionary alloc] initWithDictionary:prevNetworkIDStats];
+    }
+
+    NSMutableDictionary<NSString*, NSNumber*> *entry =
+        [[NSMutableDictionary alloc] initWithDictionary:[networkIDStats objectForKey:networkID]];
+
+    NSString *key = [NSString stringWithFormat:@"Gateway-%@", gatewayIP];
 
     NSNumber *count = [entry objectForKey:key];
     if (count == nil) {

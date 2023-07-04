@@ -1290,6 +1290,54 @@ typedef NS_ERROR_ENUM(PsiphonTunnelErrorDomain, PsiphonTunnelErrorCode) {
         [self logMessage:[NSString stringWithFormat:@"error getting network ID: %@", warn.localizedDescription]];
     }
 
+    if (@available(iOS 13.0, *)) {
+
+        DefaultRouteMonitor *d = (DefaultRouteMonitor*)self->reachability;
+        nw_path_t path = d.pathState.path;
+        NSMutableString *gatewayIPs = [[NSMutableString alloc] init];
+
+        nw_path_enumerate_gateways(path, ^bool(nw_endpoint_t  _Nonnull gateway) {
+
+            const struct sockaddr *res = nw_endpoint_get_address(gateway);
+
+            // Copied from https://stackoverflow.com/a/23040684.
+
+            char s[INET6_ADDRSTRLEN];
+            s[INET6_ADDRSTRLEN-1] = '\0';
+
+            switch(res->sa_family) {
+                case AF_INET: {
+                    struct sockaddr_in *addr_in = (struct sockaddr_in *)res;
+
+                    inet_ntop(AF_INET, &(addr_in->sin_addr), s, INET_ADDRSTRLEN);
+                    break;
+                }
+                case AF_INET6: {
+                    struct sockaddr_in6 *addr_in6 = (struct sockaddr_in6 *)res;
+
+                    inet_ntop(AF_INET6, &(addr_in6->sin6_addr), s, INET6_ADDRSTRLEN);
+                    break;
+                }
+                default:
+                    break;
+            }
+
+            NSString *gatewayIP = [NSString stringWithUTF8String:s];
+
+            if ([gatewayIPs isEqualToString:@""]) {
+                [gatewayIPs appendString:gatewayIP];
+            } else {
+                [gatewayIPs appendFormat:@"_%@", gatewayIP];
+            }
+
+            return false;
+        });
+
+        [NetworkID addGatewayIPsToNetworkIDStats:gatewayIPs forNetworkID:networkID];
+    } else {
+        // Fallback on earlier versions
+    }
+
     // Only increase count once per extension runtime
     if (atomic_load(&self->useInitialDNS)) {
         [NetworkID addInitialDNSCacheToNetworkIDStats:self->initialDNSCache

@@ -29,6 +29,8 @@ NS_ASSUME_NONNULL_BEGIN
 
 + (void)addInitialDNSCacheToNetworkIDStats:(NSString*)dnsServers forNetworkID:(NSString*)networkID;
 
++ (void)addGatewayIPsToNetworkIDStats:(NSString*)gatewayIP forNetworkID:(NSString*)networkID;
+
 /// The network ID contains potential PII. In tunnel-core, the network ID
 /// is used only locally in the client and not sent to the server.
 ///
