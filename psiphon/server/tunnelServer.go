@@ -2018,7 +2018,20 @@ func (sshClient *sshClient) run(
 
 	var sshHandshakeAfterFunc *time.Timer
 	if sshClient.sshServer.support.Config.sshHandshakeTimeout > 0 {
-		sshHandshakeAfterFunc = time.AfterFunc(sshClient.sshServer.support.Config.sshHandshakeTimeout, func() {
+
+		var timeElapsed time.Duration
+		if bConn, ok := baseConn.(*bufferedConn); ok {
+			timeElapsed = bConn.timeElapsed
+		}
+
+		var sshHandshakeTimeout time.Duration
+		if timeElapsed >= sshClient.sshServer.support.Config.sshHandshakeTimeout {
+			sshHandshakeTimeout = 0
+		} else {
+			sshHandshakeTimeout = sshClient.sshServer.support.Config.sshHandshakeTimeout - timeElapsed
+		}
+
+		sshHandshakeAfterFunc = time.AfterFunc(sshHandshakeTimeout, func() {
 			resultChannel <- &sshNewServerConnResult{err: std_errors.New("ssh handshake timeout")}
 		})
 	}

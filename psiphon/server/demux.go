@@ -145,6 +145,8 @@ func (mux *protocolDemux) run() error {
 
 		go func() {
 
+			classificationStartTime := time.Now()
+
 			type classifiedConnResult struct {
 				index int
 				acc   bytes.Buffer
@@ -222,7 +224,7 @@ func (mux *protocolDemux) run() error {
 			// downstream.
 			// TODO: subtract the time it took to classify the conn from the
 			// subsequent SSH handshake timeout (sshHandshakeTimeout).
-			bConn := newBufferedConn(conn, result.acc)
+			bConn := newBufferedConn(conn, result.acc, time.Since(classificationStartTime))
 			select {
 			case mux.conns[result.index] <- bConn:
 			case <-mux.ctx.Done():
@@ -281,14 +283,16 @@ func (p protoListener) Addr() net.Addr {
 }
 
 type bufferedConn struct {
-	buffer *bytes.Buffer
+	buffer      *bytes.Buffer
+	timeElapsed time.Duration
 	net.Conn
 }
 
-func newBufferedConn(conn net.Conn, buffer bytes.Buffer) *bufferedConn {
+func newBufferedConn(conn net.Conn, buffer bytes.Buffer, timeElapsed time.Duration) *bufferedConn {
 	return &bufferedConn{
-		Conn:   conn,
-		buffer: &buffer,
+		Conn:        conn,
+		buffer:      &buffer,
+		timeElapsed: timeElapsed,
 	}
 }
 
