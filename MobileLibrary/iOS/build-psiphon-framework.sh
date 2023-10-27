@@ -216,6 +216,27 @@ ONLY_ACTIVE_ARCH="NO" \
 SKIP_INSTALL="NO" \
 EXCLUDED_ARCHS="armv7"
 
+#
+# Build PsiphonTunnel framework for iOS.
+#
+
+TVOS_ARCHIVE="${BUILD_DIR}/ios.xcarchive"
+
+xcodebuild clean archive \
+-project "${UMBRELLA_FRAMEWORK_XCODE_PROJECT}" \
+-scheme "PsiphonTunnel" \
+-configuration "Release" \
+-sdk appletvos \
+-archivePath "${TVOS_ARCHIVE}" \
+CODE_SIGN_IDENTITY="" \
+CODE_SIGNING_REQUIRED="NO" \
+CODE_SIGN_ENTITLEMENTS="" \
+CODE_SIGNING_ALLOWED="NO" \
+STRIP_BITCODE_FROM_COPIED_FILES="NO" \
+BUILD_LIBRARY_FOR_DISTRIBUTION="YES" \
+ONLY_ACTIVE_ARCH="NO" \
+SKIP_INSTALL="NO" \
+EXCLUDED_ARCHS="armv7"
 
 # Build PsiphonTunnel framework for simulator.
 #
@@ -246,6 +267,8 @@ EXCLUDED_ARCHS="i386"
 xcodebuild -create-xcframework \
 -framework "${IOS_ARCHIVE}/Products/Library/Frameworks/PsiphonTunnel.framework" \
 -debug-symbols "${IOS_ARCHIVE}/dSYMs/PsiphonTunnel.framework.dSYM" \
+-framework "${TVOS_ARCHIVE}/Products/Library/Frameworks/PsiphonTunnel.framework" \
+-debug-symbols "${TVOS_ARCHIVE}/dSYMs/PsiphonTunnel.framework.dSYM" \
 -framework "${SIMULATOR_ARCHIVE}/Products/Library/Frameworks/PsiphonTunnel.framework" \
 -debug-symbols "${SIMULATOR_ARCHIVE}/dSYMs/PsiphonTunnel.framework.dSYM" \
 -output "${BUILD_DIR}/PsiphonTunnel.xcframework"
