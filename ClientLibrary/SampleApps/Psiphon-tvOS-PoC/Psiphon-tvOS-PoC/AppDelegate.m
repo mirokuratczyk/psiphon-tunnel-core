@@ -43,6 +43,9 @@
         exit(1);
     }
 
+    // From https://developer.apple.com/forums/thread/19002?answerId=60913022#60913022
+    NSString *cachesPath = [NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES) lastObject];
+
     // set server list
     char *server_list = "";
 
@@ -62,7 +65,7 @@
 
     struct Parameters params;
     params.sizeofStruct = sizeof(struct Parameters);
-    params.dataRootDirectory = [bundlePath cStringUsingEncoding:NSUTF8StringEncoding];
+    params.dataRootDirectory = [cachesPath cStringUsingEncoding:NSUTF8StringEncoding];
     params.clientPlatform = client_platform;
     params.networkID = network_id;
     params.establishTunnelTimeoutSeconds = &timeout;
