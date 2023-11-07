@@ -211,6 +211,11 @@ func CustomTLSDial(
 		(config.VerifyLegacyCertificate != nil &&
 			(config.SkipVerify ||
 				len(config.VerifyServerName) > 0 ||
+				len(config.VerifyPins) > 0)) ||
+
+		(config.DisableSystemRootCAs &&
+			!config.SkipVerify &&
+			(len(config.VerifyServerName) > 0 ||
 				len(config.VerifyPins) > 0)) {
 
 		return nil, errors.TraceNew("incompatible certification verification parameters")
@@ -257,7 +262,7 @@ func CustomTLSDial(
 	tlsConfigServerName := ""
 	verifyServerName := hostname
 
-	if config.SkipVerify {
+	if config.SkipVerify || config.DisableSystemRootCAs {
 		tlsConfigInsecureSkipVerify = true
 	}
 
@@ -303,7 +308,9 @@ func CustomTLSDial(
 					rawCerts, config.VerifyLegacyCertificate)
 			}
 
-			if tlsConfigInsecureSkipVerify {
+			// TODO: add comment
+			// TODO: if tlsConfigRootCAs we could do cert and sni pining verif
+			if tlsConfigInsecureSkipVerify && !config.DisableSystemRootCAs {
 
 				// Limitation: this verification path does not set the utls.Conn's
 				// ConnectionState certificate information.
@@ -313,7 +320,7 @@ func CustomTLSDial(
 				}
 				var err error
 				verifiedChains, err = verifyServerCertificate(
-					tlsConfigRootCAs, rawCerts, verifyServerName, config.DisableSystemRootCAs)
+					tlsConfigRootCAs, rawCerts, verifyServerName)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -624,7 +631,7 @@ func verifyLegacyCertificate(rawCerts [][]byte, expectedCertificate *x509.Certif
 // verifyServerCertificate parses and verifies the provided chain. If
 // successful, it returns the verified chains that were built.
 func verifyServerCertificate(
-	rootCAs *x509.CertPool, rawCerts [][]byte, verifyServerName string, disableSystemRootCAs bool) ([][]*x509.Certificate, error) {
+	rootCAs *x509.CertPool, rawCerts [][]byte, verifyServerName string) ([][]*x509.Certificate, error) {
 
 	// This duplicates the verification logic in utls (and standard crypto/tls).
 
@@ -635,18 +642,6 @@ func verifyServerCertificate(
 			return nil, errors.Trace(err)
 		}
 		certs[i] = cert
-	}
-
-	// Ensure system root CAs are not loaded, which will cause verification to
-	// fail. Instead use the last certificate in the chain received from the
-	// server as a trusted root certificate, which allows the chain and server
-	// name to be verified while ignoring whether the root certificate is
-	// trusted by the system.
-	if rootCAs == nil && disableSystemRootCAs {
-		rootCAs = x509.NewCertPool()
-		if len(certs) > 0 {
-			rootCAs.AddCert(certs[len(certs)-1])
-		}
 	}
 
 	opts := x509.VerifyOptions{

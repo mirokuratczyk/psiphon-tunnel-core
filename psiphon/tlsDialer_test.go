@@ -210,9 +210,8 @@ func TestTLSCertificateVerification(t *testing.T) {
 		conn.Close()
 	}
 
-	// Test: with SNI changed, DisableSystemRootCAs set along with
-	// VerifyServerName and VerifyPins, and pinning the TLS dial
-	// succeeds.
+	// Test: with DisableSystemRootCAs set and without VerifyServerName or
+	// VerifyPins set, the TLS dial succeeds.
 
 	conn, err = CustomTLSDial(
 		context.Background(), "tcp", serverAddr,
@@ -221,8 +220,43 @@ func TestTLSCertificateVerification(t *testing.T) {
 			Dial:                 dialer,
 			SNIServerName:        "not-" + serverName,
 			DisableSystemRootCAs: true,
+		})
+
+	if err != nil {
+		t.Errorf("CustomTLSDial failed: %v", err)
+	} else {
+		conn.Close()
+	}
+
+	// Test: with DisableSystemRootCAs set along with VerifyServerName and
+	// VerifyPins, the TLS dial fails.
+
+	conn, err = CustomTLSDial(
+		context.Background(), "tcp", serverAddr,
+		&CustomTLSConfig{
+			Parameters:           params,
+			Dial:                 dialer,
+			SNIServerName:        serverName,
+			DisableSystemRootCAs: true,
 			VerifyServerName:     serverName,
 			VerifyPins:           []string{rootCACertificatePin},
+		})
+
+	if err == nil {
+		conn.Close()
+		t.Errorf("unexpected success with DisableSystemRootCAs set along with VerifyServerName and VerifyPins")
+	}
+
+	// Test: with DisableSystemRootCAs set, SNI changed, and without
+	// VerifyServerName or VerifyPins set, the TLS dial succeeds.
+
+	conn, err = CustomTLSDial(
+		context.Background(), "tcp", serverAddr,
+		&CustomTLSConfig{
+			Parameters:           params,
+			Dial:                 dialer,
+			SNIServerName:        "not-" + serverName,
+			DisableSystemRootCAs: true,
 		})
 
 	if err != nil {
@@ -358,7 +392,7 @@ func initTestCertificatesAndWebServer(
 	// Run an HTTPS server with the server certificate.
 
 	serverKeyPair, err := tls.X509KeyPair(
-		append(pemServerCertificate, pemRootCACertificate...), pemServerPrivateKey)
+		pemServerCertificate, pemServerPrivateKey)
 	if err != nil {
 		t.Fatalf("tls.X509KeyPair failed: %v", err)
 	}
