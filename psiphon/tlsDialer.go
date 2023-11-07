@@ -101,12 +101,9 @@ type CustomTLSConfig struct {
 
 	// DisableSystemRootCAs, when true, disables loading system root CAs when
 	// verifying the server certificate chain. Set DisableSystemRootCAs only in
-	// cases where system root CAs cannot be loaded; for example, if
-	// unsupported (iOS < 12) or insufficient memory (VPN extension on iOS <
-	// 15).
-	//
-	// When DisableSystemRootCAs is set, both VerifyServerName and VerifyPins
-	// must be set.
+	// cases where system root CAs cannot be loaded and there is additional
+	// security at the payload level; for example, if unsupported (iOS < 12) or
+	// insufficient memory (VPN extension on iOS < 15).
 	DisableSystemRootCAs bool
 
 	// VerifyServerName specifies a domain name that must appear in the server
@@ -214,12 +211,7 @@ func CustomTLSDial(
 		(config.VerifyLegacyCertificate != nil &&
 			(config.SkipVerify ||
 				len(config.VerifyServerName) > 0 ||
-				len(config.VerifyPins) > 0)) ||
-
-		(config.DisableSystemRootCAs &&
-			(!config.SkipVerify &&
-				(len(config.VerifyServerName) == 0 ||
-					len(config.VerifyPins) == 0))) {
+				len(config.VerifyPins) > 0)) {
 
 		return nil, errors.TraceNew("incompatible certification verification parameters")
 	}
@@ -327,7 +319,8 @@ func CustomTLSDial(
 				}
 			}
 
-			if len(config.VerifyPins) > 0 {
+			// TODO: add comment
+			if len(config.VerifyPins) > 0 && !config.DisableSystemRootCAs {
 				err := verifyCertificatePins(
 					config.VerifyPins, verifiedChains)
 				if err != nil {
@@ -630,9 +623,6 @@ func verifyLegacyCertificate(rawCerts [][]byte, expectedCertificate *x509.Certif
 
 // verifyServerCertificate parses and verifies the provided chain. If
 // successful, it returns the verified chains that were built.
-//
-// WARNING: disableSystemRootCAs must only be set when the certificate
-// chain has been, or will be, verified with verifyCertificatePins.
 func verifyServerCertificate(
 	rootCAs *x509.CertPool, rawCerts [][]byte, verifyServerName string, disableSystemRootCAs bool) ([][]*x509.Certificate, error) {
 
@@ -648,7 +638,7 @@ func verifyServerCertificate(
 	}
 
 	// Ensure system root CAs are not loaded, which will cause verification to
-	// fail. Instead use the root certificate of the chain received from the
+	// fail. Instead use the last certificate in the chain received from the
 	// server as a trusted root certificate, which allows the chain and server
 	// name to be verified while ignoring whether the root certificate is
 	// trusted by the system.
