@@ -314,6 +314,8 @@ type Config struct {
 	// network. See: NetworkIDGetter doc.
 	NetworkIDGetter NetworkIDGetter
 
+	MemoryMetricsGetter MemoryMetricsGetter
+
 	// NetworkID, when not blank, is used as the identifier for the host's
 	// current active network.
 	// NetworkID is ignored when NetworkIDGetter is set.
@@ -933,6 +935,11 @@ type Config struct {
 	loadTimestamp string
 }
 
+// TODO: move to proper file
+type MemoryMetricsGetter interface {
+	GetMemoryMetrics() string
+}
+
 // Config field which specifies if notice files should be used and at which
 // frequency and size they should be rotated.
 //
@@ -1427,7 +1434,16 @@ func (config *Config) SetParameters(tag string, skipOnError bool, applyParameter
 		setParameters = append(setParameters, applyParameters)
 	}
 
-	counts, err := config.params.Set(tag, skipOnError, setParameters...)
+	notice := func(s string) {
+		NoticeInfo(s)
+		if config.MemoryMetricsGetter != nil {
+			mm := config.MemoryMetricsGetter.GetMemoryMetrics()
+			NoticeInfo(mm)
+		}
+		emitMemoryMetrics()
+	}
+
+	counts, err := config.params.Set(tag, skipOnError, notice, setParameters...)
 	if err != nil {
 		return errors.Trace(err)
 	}

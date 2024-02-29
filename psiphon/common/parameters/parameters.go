@@ -55,6 +55,7 @@ package parameters
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"reflect"
 	"sync/atomic"
@@ -810,7 +811,7 @@ func NewParameters(
 		getValueLogger: getValueLogger,
 	}
 
-	_, err := parameters.Set("", false)
+	_, err := parameters.Set("", false, nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -862,7 +863,7 @@ func makeDefaultParameters() (map[string]interface{}, error) {
 // For use in logging, Set returns a count of the number of parameters applied
 // from each applyParameters.
 func (p *Parameters) Set(
-	tag string, skipOnError bool, applyParameters ...map[string]interface{}) ([]int, error) {
+	tag string, skipOnError bool, notice func(string), applyParameters ...map[string]interface{}) ([]int, error) {
 
 	makeTypedValue := func(templateValue, value interface{}) (interface{}, error) {
 
@@ -1030,6 +1031,8 @@ func (p *Parameters) Set(
 			// TODO: require RemoteServerListSignaturePublicKey when
 			// RemoteServerListURLs is set?
 
+			notice(fmt.Sprintf("applying %s of type %s", name, reflect.TypeOf(newValue)))
+
 			switch v := newValue.(type) {
 			case TransferURLs:
 				err := v.DecodeAndValidate()
@@ -1186,7 +1189,7 @@ func (p *Parameters) Set(
 				if name == OSSHPrefixSpecs || name == ServerOSSHPrefixSpecs {
 					prefixMode = true
 				}
-				err := v.Validate(prefixMode)
+				err := v.Validate(prefixMode, notice)
 				if err != nil {
 					if skipOnError {
 						continue

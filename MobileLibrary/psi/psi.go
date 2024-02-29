@@ -43,6 +43,10 @@ type PsiphonProviderNoticeHandler interface {
 	Notice(noticeJSON string)
 }
 
+type PsiphonProviderMemoryMetrics interface {
+	GetMemoryMetrics() string
+}
+
 type PsiphonProviderNetwork interface {
 	HasNetworkConnectivity() int
 	GetNetworkID() string
@@ -53,6 +57,7 @@ type PsiphonProviderNetwork interface {
 type PsiphonProvider interface {
 	PsiphonProviderNoticeHandler
 	PsiphonProviderNetwork
+	PsiphonProviderMemoryMetrics
 	BindToDevice(fileDescriptor int) (string, error)
 
 	// TODO: move GetDNSServersAsString to PsiphonProviderNetwork to
@@ -162,6 +167,7 @@ func Start(
 	config.NetworkConnectivityChecker = wrappedProvider
 	config.NetworkIDGetter = wrappedProvider
 	config.DNSServerGetter = wrappedProvider
+	config.MemoryMetricsGetter = wrappedProvider
 
 	if useDeviceBinder {
 		config.DeviceBinder = wrappedProvider
@@ -554,4 +560,10 @@ func (p *mutexPsiphonProvider) GetNetworkID() string {
 	p.Lock()
 	defer p.Unlock()
 	return p.p.GetNetworkID()
+}
+
+func (p *mutexPsiphonProvider) GetMemoryMetrics() string {
+	p.Lock()
+	defer p.Unlock()
+	return p.p.GetMemoryMetrics()
 }

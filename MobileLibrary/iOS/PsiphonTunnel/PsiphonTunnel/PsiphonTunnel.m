@@ -39,6 +39,7 @@
 #import "ReachabilityProtocol.h"
 #import "Reachability+ReachabilityProtocol.h"
 #import "DefaultRouteMonitor.h"
+#import <os/proc.h>
 
 NSErrorDomain _Nonnull const PsiphonTunnelErrorDomain = @"com.psiphon3.ios.PsiphonTunnelErrorDomain";
 
@@ -1302,6 +1303,48 @@ typedef NS_ERROR_ENUM(PsiphonTunnelErrorDomain, PsiphonTunnelErrorCode) {
         [self handlePsiphonNotice:noticeJSON];
         dispatch_semaphore_signal(self->noticeHandlingSemaphore);
     });
+}
+
+// TODO: move to new class
+- (NSString *)getMemoryMetrics {
+
+    if (@available(iOS 13.0, *)) {
+        unsigned long long availableMemory = (unsigned long long)os_proc_available_memory();
+        
+        // Calculate the current memory footprint of the application, which should be its memory limit
+        // minus the amount of additional memory it can allocate before hitting that memory limit. I.e.,
+        // memoryInUse = memoryLimit - availableMemory.
+        unsigned long long memoryInUse;
+        if (@available(iOS 15.0, *)) {
+            // iOS 15+: network extension memory limit is 50MB; may change in a future iOS version
+            memoryInUse = (50 << 20) - availableMemory;
+        } else {
+            // iOS 10-14: network extension memory limit is 10MB
+            memoryInUse = (10 << 20) - availableMemory;
+        }
+
+        NSDictionary *json = @{
+            @"Free": [self memoryBytesInMB:availableMemory],
+            @"FreeBytes": [NSNumber numberWithUnsignedLongLong:availableMemory],
+            @"Used": [self memoryBytesInMB:memoryInUse],
+            @"UsedBytes": [NSNumber numberWithUnsignedLongLong:memoryInUse]
+        };
+
+        NSString *jsonStr = [[[SBJson4Writer alloc] init] stringWithObject:json];
+
+        return jsonStr;
+    } else {
+        // Fallback on earlier versions
+        return @"unsupported on iOS < 15";
+    }
+}
+
+// TODO: make class method
+- (NSString *)memoryBytesInMB:(unsigned long long)memoryBytes {
+    NSByteCountFormatter *bf = [[NSByteCountFormatter alloc] init];
+    bf.allowedUnits = NSByteCountFormatterUseMB;
+    bf.countStyle = NSByteCountFormatterCountStyleMemory;
+    return [bf stringFromByteCount:memoryBytes];
 }
 
 #pragma mark - Helpers (private)

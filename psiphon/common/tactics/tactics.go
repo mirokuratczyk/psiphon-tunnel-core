@@ -560,7 +560,7 @@ func (server *Server) Validate() error {
 				applyParameters, filteredTactics.Parameters)
 		}
 
-		_, err = params.Set("", false, applyParameters...)
+		_, err = params.Set("", false, nil, applyParameters...)
 		if err != nil {
 			return errors.Trace(err)
 		}

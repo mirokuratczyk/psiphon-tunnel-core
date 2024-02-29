@@ -24,6 +24,7 @@
 package transforms
 
 import (
+	"fmt"
 	"regexp"
 	"regexp/syntax"
 
@@ -54,14 +55,14 @@ type Specs map[string]Spec
 
 // Validate checks that all entries in a set of Specs is well-formed, with
 // valid regular expressions.
-func (specs Specs) Validate(prefixMode bool) error {
+func (specs Specs) Validate(prefixMode bool, notice func(string)) error {
 	seed, err := prng.NewSeed()
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	for _, spec := range specs {
-
+	for name, spec := range specs {
+		notice(fmt.Sprintf("validating spec %s", name))
 		// Call Apply to compile/validate the regular expressions and generators.
 
 		if prefixMode {
