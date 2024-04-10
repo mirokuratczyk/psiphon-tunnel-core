@@ -2904,7 +2904,9 @@ func (sshClient *sshClient) handleNewPacketTunnelChannel(
 			trafficType = portForwardTypeUDP
 		}
 
-		activityUpdaters := sshClient.getActivityUpdaters(trafficType, upstreamIPAddress)
+		geoIPLookup := newCachedGeoIPLookup(sshClient.sshServer.support.GeoIPService)
+
+		activityUpdaters := sshClient.getActivityUpdaters(trafficType, upstreamIPAddress, geoIPLookup)
 
 		flowUpdaters := make([]tun.FlowActivityUpdater, len(activityUpdaters))
 		for i, activityUpdater := range activityUpdaters {
@@ -3761,7 +3763,7 @@ func (sshClient *sshClient) setOSLConfig() {
 
 // newClientSeedPortForward will return nil when no seeding is
 // associated with the specified ipAddress.
-func (sshClient *sshClient) newClientSeedPortForward(IPAddress net.IP) *osl.ClientSeedPortForward {
+func (sshClient *sshClient) newClientSeedPortForward(IPAddress net.IP, geoIPLookup *cachedGeoIPLookup) *osl.ClientSeedPortForward {
 	sshClient.Lock()
 	defer sshClient.Unlock()
 
@@ -3771,7 +3773,7 @@ func (sshClient *sshClient) newClientSeedPortForward(IPAddress net.IP) *osl.Clie
 	}
 
 	lookupASN := func(IP net.IP) string {
-		return sshClient.sshServer.support.GeoIPService.LookupISPForIP(IP).ASN
+		return geoIPLookup.lookupIP(IP, true).ASN
 	}
 
 	return sshClient.oslClientSeedState.NewClientSeedPortForward(IPAddress, lookupASN)
@@ -3824,7 +3826,7 @@ func (sshClient *sshClient) setDestinationBytesMetrics() {
 	sshClient.destinationBytesMetricsASN = p.String(parameters.DestinationBytesMetricsASN)
 }
 
-func (sshClient *sshClient) newDestinationBytesMetricsUpdater(portForwardType int, IPAddress net.IP) *destinationBytesMetrics {
+func (sshClient *sshClient) newDestinationBytesMetricsUpdater(portForwardType int, IPAddress net.IP, geoIPLookup *cachedGeoIPLookup) *destinationBytesMetrics {
 	sshClient.Lock()
 	defer sshClient.Unlock()
 
@@ -3832,7 +3834,7 @@ func (sshClient *sshClient) newDestinationBytesMetricsUpdater(portForwardType in
 		return nil
 	}
 
-	if sshClient.sshServer.support.GeoIPService.LookupISPForIP(IPAddress).ASN != sshClient.destinationBytesMetricsASN {
+	if geoIPLookup.lookupIP(IPAddress, true).ASN != sshClient.destinationBytesMetricsASN {
 		return nil
 	}
 
@@ -3843,15 +3845,15 @@ func (sshClient *sshClient) newDestinationBytesMetricsUpdater(portForwardType in
 	return &sshClient.udpDestinationBytesMetrics
 }
 
-func (sshClient *sshClient) getActivityUpdaters(portForwardType int, IPAddress net.IP) []common.ActivityUpdater {
+func (sshClient *sshClient) getActivityUpdaters(portForwardType int, IPAddress net.IP, geoIPLookup *cachedGeoIPLookup) []common.ActivityUpdater {
 	var updaters []common.ActivityUpdater
 
-	clientSeedPortForward := sshClient.newClientSeedPortForward(IPAddress)
+	clientSeedPortForward := sshClient.newClientSeedPortForward(IPAddress, geoIPLookup)
 	if clientSeedPortForward != nil {
 		updaters = append(updaters, clientSeedPortForward)
 	}
 
-	destinationBytesMetrics := sshClient.newDestinationBytesMetricsUpdater(portForwardType, IPAddress)
+	destinationBytesMetrics := sshClient.newDestinationBytesMetricsUpdater(portForwardType, IPAddress, geoIPLookup)
 	if destinationBytesMetrics != nil {
 		updaters = append(updaters, destinationBytesMetrics)
 	}
@@ -4472,9 +4474,11 @@ func (sshClient *sshClient) handleTCPChannel(
 	// as the boolean value split_tunnel. As they may indicate some information
 	// about browsing activity, no other split tunnel metrics are logged.
 
+	geoIPLookup := newCachedGeoIPLookup(sshClient.sshServer.support.GeoIPService)
+
 	if doSplitTunnel {
 
-		destinationGeoIPData := sshClient.sshServer.support.GeoIPService.LookupIP(IP)
+		destinationGeoIPData := geoIPLookup.lookupIP(IP, false)
 
 		if sshClient.geoIPData.Country != GEOIP_UNKNOWN_VALUE &&
 			sshClient.handshakeState.splitTunnelLookup.lookup(
@@ -4578,7 +4582,7 @@ func (sshClient *sshClient) handleTCPChannel(
 		sshClient.idleTCPPortForwardTimeout(),
 		true,
 		lruEntry,
-		sshClient.getActivityUpdaters(portForwardTypeTCP, IP)...)
+		sshClient.getActivityUpdaters(portForwardTypeTCP, IP, geoIPLookup)...)
 	if err != nil {
 		log.WithTraceFields(LogFields{"error": err}).Error("NewActivityMonitoredConn failed")
 		return
@@ -4628,4 +4632,34 @@ func (sshClient *sshClient) handleTCPChannel(
 			"remoteAddr": remoteAddr,
 			"bytesUp":    atomic.LoadInt64(&bytesUp),
 			"bytesDown":  atomic.LoadInt64(&bytesDown)}).Debug("exiting")
+}
+
+type cachedGeoIPLookup struct {
+	geoIPService *GeoIPService
+	geoIPData    GeoIPData
+	ip           net.IP
+	ispOnly      bool
+	set          bool
+}
+
+func newCachedGeoIPLookup(geoIPService *GeoIPService) *cachedGeoIPLookup {
+	return &cachedGeoIPLookup{
+		geoIPService: geoIPService,
+	}
+}
+
+func (l *cachedGeoIPLookup) lookupIP(IP net.IP, ISPOnly bool) GeoIPData {
+
+	if !l.set || !IP.Equal(l.ip) || l.ispOnly && !ISPOnly {
+		if ISPOnly {
+			l.geoIPData = l.geoIPService.LookupISPForIP(IP)
+		} else {
+			l.geoIPData = l.geoIPService.LookupIP(IP)
+		}
+		l.ip = IP
+		l.ispOnly = ISPOnly
+		l.set = true
+	}
+
+	return l.geoIPData
 }
