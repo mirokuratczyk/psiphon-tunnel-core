@@ -107,7 +107,7 @@ func main() {
 	}
 
 	// Password "none" from psi_ops:
-	// https://bitbucket.org/psiphon/psiphon-circumvention-system/src/ef4f3d4893bd5259ef24f0cb4525cbbbb0854cf9/Automation/psi_ops.py?at=default&fileviewer=file-view-default#psi_ops.py-297
+	// https://github.com/Psiphon-Inc/psiphon-automation/blob/7024d6677d9e066e2e90018039a9050c7b972deb/Automation/psi_ops.py#L405
 
 	block, _ := pem.Decode(keyPairPEM)
 	decryptedKeyPairPEM, err := x509.DecryptPEMBlock(block, []byte("none"))

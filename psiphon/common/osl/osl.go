@@ -30,6 +30,7 @@
 package osl
 
 import (
+	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/hmac"
@@ -56,6 +57,7 @@ import (
 	"github.com/Psiphon-Labs/psiphon-tunnel-core/psiphon/common/crypto/nacl/secretbox"
 	"github.com/Psiphon-Labs/psiphon-tunnel-core/psiphon/common/errors"
 	"github.com/Psiphon-Labs/psiphon-tunnel-core/psiphon/common/sss"
+	"golang.org/x/crypto/hkdf"
 )
 
 const (
@@ -1534,7 +1536,25 @@ func deriveKeyHKDF(masterKey []byte, context ...[]byte) []byte {
 		mac.Write([]byte(item))
 	}
 	mac.Write([]byte{byte(0x01)})
-	return mac.Sum(nil)
+
+	s := mac.Sum(nil)
+
+	var info []byte
+	for _, item := range context {
+		info = append(info, item...)
+	}
+
+	key := make([]byte, 32)
+	r := hkdf.Expand(sha256.New, masterKey, info)
+	if _, err := io.ReadFull(r, key); err != nil {
+		panic(err)
+	}
+
+	if !bytes.Equal(key, s) {
+		panic("not equal")
+	}
+
+	return s
 }
 
 // isValidShamirSplit checks sss.Split constraints
