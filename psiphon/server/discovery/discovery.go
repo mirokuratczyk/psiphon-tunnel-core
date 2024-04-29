@@ -142,6 +142,8 @@ func (d *Discovery) Start() {
 	// algorithm, and therefore discoverable with SelectServers, everytime a
 	// server enters, or exits, its discovery date range.
 	go func() {
+		defer d.wg.Done()
+
 		for ctx.Err() == nil {
 			// Wait until the next time a server enters, or exits, its
 			// discovery date range.
@@ -188,7 +190,6 @@ func (d *Discovery) Start() {
 				break
 			}
 		}
-		d.wg.Done()
 	}()
 }
 
