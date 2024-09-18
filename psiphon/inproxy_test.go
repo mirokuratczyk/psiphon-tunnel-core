@@ -31,6 +31,7 @@ import (
 	"github.com/Psiphon-Labs/psiphon-tunnel-core/psiphon/common/parameters"
 	"github.com/Psiphon-Labs/psiphon-tunnel-core/psiphon/common/prng"
 	"github.com/Psiphon-Labs/psiphon-tunnel-core/psiphon/common/resolver"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestInproxyComponents(t *testing.T) {
@@ -39,7 +40,7 @@ func TestInproxyComponents(t *testing.T) {
 	// replay; actual in-proxy broker round trips are exercised in the
 	// psiphon/server end-to-end tests.
 
-	err := runInproxyBrokerDialParametersTest()
+	err := runInproxyBrokerDialParametersTest(t)
 	if err != nil {
 		t.Fatalf(errors.Trace(err).Error())
 	}
@@ -57,7 +58,7 @@ func TestInproxyComponents(t *testing.T) {
 	// TODO: test inproxyUDPConn multiplexed IPv6Synthesizer
 }
 
-func runInproxyBrokerDialParametersTest() error {
+func runInproxyBrokerDialParametersTest(t *testing.T) error {
 
 	testDataDirName, err := ioutil.TempDir("", "psiphon-inproxy-broker-test")
 	if err != nil {
@@ -144,7 +145,7 @@ func runInproxyBrokerDialParametersTest() error {
 	}
 
 	if !regexp.MustCompile(addressRegex).Copy().Match(
-		[]byte(brokerDialParams.FrontingDialAddress)) {
+		[]byte(brokerDialParams.FrontedHTTPDialParameters.meekConfig.DialAddress)) {
 		return errors.TraceNew("unexpected FrontingDialAddress")
 	}
 
@@ -158,8 +159,10 @@ func runInproxyBrokerDialParametersTest() error {
 
 	// Test: replay on success
 
-	previousFrontingDialAddress := brokerDialParams.FrontingDialAddress
-	previousTLSProfile := brokerDialParams.TLSProfile
+	prevBrokerDialParams := brokerDialParams
+
+	previousFrontingDialAddress := brokerDialParams.FrontedHTTPDialParameters.meekConfig.DialAddress
+	previousTLSProfile := brokerDialParams.FrontedHTTPDialParameters.meekConfig.TLSProfile
 
 	roundTripper, err := brokerClient.GetBrokerDialCoordinator().BrokerClientRoundTripper()
 	if err != nil {
@@ -179,13 +182,8 @@ func runInproxyBrokerDialParametersTest() error {
 		return errors.TraceNew("unexpected non-replay")
 	}
 
-	if brokerDialParams.FrontingDialAddress != previousFrontingDialAddress {
-		return errors.TraceNew("unexpected replayed FrontingDialAddress")
-	}
-
-	if brokerDialParams.TLSProfile != previousTLSProfile {
-		return errors.TraceNew("unexpected replayed TLSProfile")
-	}
+	// All exported fields should be replayed
+	assert.EqualExportedValues(t, brokerDialParams, prevBrokerDialParams)
 
 	_ = brokerDialParams.GetMetrics()
 
@@ -211,7 +209,7 @@ func runInproxyBrokerDialParametersTest() error {
 		return errors.TraceNew("unexpected replay")
 	}
 
-	if brokerDialParams.FrontingDialAddress == previousFrontingDialAddress {
+	if brokerDialParams.FrontedHTTPDialParameters.meekConfig.DialAddress == previousFrontingDialAddress {
 		return errors.TraceNew("unexpected non-replayed FrontingDialAddress")
 	}
 
@@ -231,11 +229,11 @@ func runInproxyBrokerDialParametersTest() error {
 		return errors.TraceNew("unexpected non-replay")
 	}
 
-	if brokerDialParams.FrontingDialAddress != previousFrontingDialAddress {
+	if brokerDialParams.FrontedHTTPDialParameters.meekConfig.DialAddress != previousFrontingDialAddress {
 		return errors.TraceNew("unexpected replayed FrontingDialAddress")
 	}
 
-	if brokerDialParams.TLSProfile != previousTLSProfile {
+	if brokerDialParams.FrontedHTTPDialParameters.meekConfig.TLSProfile != previousTLSProfile {
 		return errors.TraceNew("unexpected replayed TLSProfile")
 	}
 
@@ -261,7 +259,7 @@ func runInproxyBrokerDialParametersTest() error {
 		return errors.TraceNew("unexpected replay")
 	}
 
-	if brokerDialParams.FrontingDialAddress == previousFrontingDialAddress {
+	if brokerDialParams.FrontedHTTPDialParameters.meekConfig.DialAddress == previousFrontingDialAddress {
 		return errors.TraceNew("unexpected non-replayed FrontingDialAddress")
 	}
 
