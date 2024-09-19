@@ -278,8 +278,8 @@ func makeFrontedMeekDialParameters(
 	isFronted := true
 	frontedMeekDialParams.TLSProfile,
 		frontedMeekDialParams.TLSVersion,
-		frontedMeekDialParams.RandomizedTLSProfileSeed, err = SelectTLSProfile(
-		requireTLS12SessionTickets, requireTLS13Support, isFronted, frontedMeekDialParams.FrontingProviderID, p)
+		frontedMeekDialParams.RandomizedTLSProfileSeed,
+		err = SelectTLSProfile(requireTLS12SessionTickets, requireTLS13Support, isFronted, frontedMeekDialParams.FrontingProviderID, p)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -455,10 +455,6 @@ func (f *FrontedMeekDialParameters) prepareDialConfigs(
 	}
 
 	// MeekDialConfig
-	//
-	// The broker round trips use MeekModeWrappedPlaintextRoundTrip without
-	// meek cookies, so meek obfuscation is not configured. The in-proxy
-	// broker session payloads have their own obfuscation layer.
 
 	// Note: if MeekModeRelay or MeekModeObfuscatedRoundTrip are supported in the
 	// future, set MeekObfuscatorPaddingSeed.
