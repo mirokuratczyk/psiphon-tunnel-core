@@ -75,7 +75,7 @@ func makeFrontedHTTPDialParameters(
 
 	// Initialize Dial/MeekConfigs to be passed to the corresponding dialers.
 
-	err = dialParams.prepareDialConfig(
+	err = dialParams.prepareDialConfigs(
 		config,
 		p,
 		false,
@@ -91,8 +91,9 @@ func makeFrontedHTTPDialParameters(
 	return dialParams, nil
 }
 
-// prepareDialConfig is called for both new and replayed dial parameters.
-func (dialParams *frontedHTTPDialParameters) prepareDialConfig(config *Config,
+// prepareDialConfigs is called for both new and replayed dial parameters.
+func (dialParams *frontedHTTPDialParameters) prepareDialConfigs(
+	config *Config,
 	p parameters.ParametersAccessor,
 	isReplay bool,
 	tunnel *Tunnel,
@@ -103,10 +104,11 @@ func (dialParams *frontedHTTPDialParameters) prepareDialConfig(config *Config,
 
 	dialParams.isReplay = isReplay
 
-	// Initialize DialConfig to be passed to the corresponding dialers.
-
 	if isReplay {
-		err := dialParams.FrontedMeekDialParameters.prepareDialConfig(
+
+		// Initialize Dial/MeekConfigs to be passed to the corresponding dialers.
+
+		err := dialParams.FrontedMeekDialParameters.prepareDialConfigs(
 			config, p, tunnel, nil, useDeviceBinder, skipVerify,
 			disableSystemRootCAs, payloadSecure)
 		if err != nil {
@@ -346,9 +348,9 @@ func makeFrontedMeekDialParameters(
 		}
 	}
 
-	// Initialize DialConfig to be passed to the corresponding dialers.
+	// Initialize Dial/MeekConfigs to be passed to the corresponding dialers.
 
-	err = frontedMeekDialParams.prepareDialConfig(
+	err = frontedMeekDialParams.prepareDialConfigs(
 		config, p, tunnel, dialCustomHeaders, useDeviceBinder, skipVerify,
 		disableSystemRootCAs, payloadSecure)
 	if err != nil {
@@ -358,8 +360,8 @@ func makeFrontedMeekDialParameters(
 	return &frontedMeekDialParams, nil
 }
 
-// prepareDialConfig is called for both new and replayed dial parameters.
-func (f *FrontedMeekDialParameters) prepareDialConfig(
+// prepareDialConfigs is called for both new and replayed dial parameters.
+func (f *FrontedMeekDialParameters) prepareDialConfigs(
 	config *Config,
 	p parameters.ParametersAccessor,
 	tunnel *Tunnel,

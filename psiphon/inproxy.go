@@ -344,7 +344,7 @@ func NewInproxyBrokerClientInstance(
 		}
 	} else {
 		brokerDialParams.brokerSpec = brokerSpec
-		err := brokerDialParams.prepareDialConfig(config, p, true)
+		err := brokerDialParams.prepareDialConfigs(config, p, true)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -810,9 +810,9 @@ func MakeInproxyBrokerDialParameters(
 		return nil, errors.Trace(err)
 	}
 
-	// Initialize DialConfig to be passed to the corresponding dialers.
+	// Initialize Dial/MeekConfigs to be passed to the corresponding dialers.
 
-	err = brokerDialParams.prepareDialConfig(
+	err = brokerDialParams.prepareDialConfigs(
 		config,
 		p,
 		false)
@@ -823,8 +823,8 @@ func MakeInproxyBrokerDialParameters(
 	return brokerDialParams, nil
 }
 
-// prepareDialConfig is called for both new and replayed broker dial parameters.
-func (brokerDialParams *InproxyBrokerDialParameters) prepareDialConfig(
+// prepareDialConfigs is called for both new and replayed broker dial parameters.
+func (brokerDialParams *InproxyBrokerDialParameters) prepareDialConfigs(
 	config *Config,
 	p parameters.ParametersAccessor,
 	isReplay bool) error {
@@ -841,7 +841,7 @@ func (brokerDialParams *InproxyBrokerDialParameters) prepareDialConfig(
 		payloadSecure := true
 		skipVerify := false
 
-		err := brokerDialParams.FrontedHTTPDialParameters.prepareDialConfig(
+		err := brokerDialParams.FrontedHTTPDialParameters.prepareDialConfigs(
 			config, p, nil, nil, true, skipVerify,
 			config.DisableSystemRootCAs, payloadSecure)
 		if err != nil {
