@@ -135,6 +135,18 @@ func (listener *TacticsListener) accept() (net.Conn, error) {
 			return nil, errRestrictedProvider
 		}
 	}
+	if protocol.TunnelProtocolUsesInproxy(listener.tunnelProtocol) &&
+		common.ContainsAny(
+			p.KeyStrings(parameters.RestrictInproxyProviderRegions,
+				listener.support.Config.GetProviderID()),
+			[]string{"", listener.support.Config.GetRegion()}) {
+
+		if p.WeightedCoinFlip(
+			parameters.RestrictInproxyProviderIDsServerProbability) {
+			conn.Close()
+			return nil, errRestrictedProvider
+		}
+	}
 
 	// Server-side fragmentation may be synchronized with client-side in two ways.
 	//
