@@ -55,14 +55,20 @@ fetcherLoop:
 
 			networkID := config.GetNetworkID()
 
-			brokerClient, _, err := brokerClientManager.GetBrokerClient(networkID)
-			if err != nil {
-				return errors.Trace(err)
-			}
-
 			roundTripper := func(
 				ctx context.Context,
 				requestPayload []byte) ([]byte, error) {
+
+				// Acquire per attempt, not once per fetch, so a retry reuses
+				// the shared client if one exists. Otherwise, including after
+				// the shared client fails or expires, a new broker client is
+				// created, which may use a different broker, fronting provider
+				// or dial parameters.
+				brokerClient, _, release, err := brokerClientManager.GetBrokerClient(ctx, networkID)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				defer release()
 
 				response, err := brokerClient.ClientDSL(
 					ctx,
@@ -84,7 +90,7 @@ fetcherLoop:
 			// TODO: add a failed_dsl_request log, similar to failed_tunnel,
 			// to record and report failures?
 
-			err = doDSLFetch(ctx, config, networkID, isTunneled, roundTripper)
+			err := doDSLFetch(ctx, config, networkID, isTunneled, roundTripper)
 			if err != nil {
 				return errors.Trace(err)
 			}

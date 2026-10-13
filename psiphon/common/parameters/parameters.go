@@ -458,6 +458,9 @@ const (
 	InproxyClientOfferRetryJitter                      = "InproxyClientOfferRetryJitter"
 	InproxyClientRelayedPacketRequestTimeout           = "InproxyClientRelayedPacketRequestTimeout"
 	InproxyClientDSLRequestTimeout                     = "InproxyClientDSLRequestTimeout"
+	InproxyClientMaxBrokerClients                      = "InproxyClientMaxBrokerClients"
+	InproxyProxyMaxBrokerClients                       = "InproxyProxyMaxBrokerClients"
+	InproxyClientBrokerClientIdleTimeout               = "InproxyClientBrokerClientIdleTimeout"
 	InproxyBrokerRoundTripStatusCodeFailureThreshold   = "InproxyBrokerRoundTripStatusCodeFailureThreshold"
 	InproxyLimitDTLSFingerprintsProbability            = "InproxyLimitDTLSFingerprintsProbability"
 	InproxyLimitDTLSFingerprints                       = "InproxyLimitDTLSFingerprints"
@@ -1127,6 +1130,9 @@ var defaultParameters = map[string]struct {
 	InproxyClientOfferRetryJitter:                      {value: 0.5, minimum: 0.0},
 	InproxyClientRelayedPacketRequestTimeout:           {value: 35 * time.Second, minimum: time.Duration(0)},
 	InproxyClientDSLRequestTimeout:                     {value: 10 * time.Second, minimum: time.Duration(0)},
+	InproxyClientMaxBrokerClients:                      {value: 1, minimum: 1},
+	InproxyProxyMaxBrokerClients:                       {value: 1, minimum: 1},
+	InproxyClientBrokerClientIdleTimeout:               {value: 0, minimum: time.Duration(0)},
 	InproxyBrokerRoundTripStatusCodeFailureThreshold:   {value: 2 * time.Second, minimum: time.Duration(0), flags: useNetworkLatencyMultiplier},
 	InproxyDTLSRandomizationProbability:                {value: 0.5, minimum: 0.0},
 	InproxyLimitDTLSFingerprintsProbability:            {value: 1.0, minimum: 0.0},
