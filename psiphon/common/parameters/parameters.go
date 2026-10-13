@@ -1132,7 +1132,7 @@ var defaultParameters = map[string]struct {
 	InproxyClientDSLRequestTimeout:                     {value: 10 * time.Second, minimum: time.Duration(0)},
 	InproxyClientMaxBrokerClients:                      {value: 1, minimum: 1},
 	InproxyProxyMaxBrokerClients:                       {value: 1, minimum: 1},
-	InproxyClientBrokerClientIdleTimeout:               {value: 0, minimum: time.Duration(0)},
+	InproxyClientBrokerClientIdleTimeout:               {value: time.Duration(0), minimum: time.Duration(0)},
 	InproxyBrokerRoundTripStatusCodeFailureThreshold:   {value: 2 * time.Second, minimum: time.Duration(0), flags: useNetworkLatencyMultiplier},
 	InproxyDTLSRandomizationProbability:                {value: 0.5, minimum: 0.0},
 	InproxyLimitDTLSFingerprintsProbability:            {value: 1.0, minimum: 0.0},

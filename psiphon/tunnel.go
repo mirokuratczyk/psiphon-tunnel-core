@@ -209,6 +209,10 @@ func (tunnel *Tunnel) Activate(
 	tunnelOwner TunnelOwner,
 	isStatusReporter bool) (retErr error) {
 
+	// The broker client is used only for the broker/server relay during the
+	// handshake below. Release the broker client when activation ends.
+	defer tunnel.dialParams.releaseInproxyBrokerClient()
+
 	// Ensure that, unless the base context is cancelled, any replayed dial
 	// parameters are cleared, no longer to be retried, if the tunnel fails to
 	// activate.
@@ -417,7 +421,7 @@ func (tunnel *Tunnel) relayInproxyPacketRoundTrip(
 		return errors.Trace(err)
 	}
 
-	inproxyConn := tunnel.dialParams.inproxyConn.Load().(*inproxy.ClientConn)
+	inproxyConn := tunnel.dialParams.getInproxyConn()
 	if inproxyConn == nil {
 		return errors.TraceNew("missing inproxyConn")
 	}
@@ -1535,7 +1539,7 @@ func makeInproxyTCPDialer(
 
 	return func(ctx context.Context, _, _ string) (net.Conn, error) {
 
-		if dialParams.inproxyConn.Load() != nil {
+		if dialParams.getInproxyConn() != nil {
 			return nil, errors.TraceNew("redial not supported")
 		}
 
@@ -1587,7 +1591,7 @@ func (e inproxyDialFailedError) Error() string {
 func dialInproxy(
 	ctx context.Context,
 	config *Config,
-	dialParams *DialParameters) (retConn *inproxy.ClientConn, retErr error) {
+	dialParams *DialParameters) (retConn *inproxyBrokerOwnedConn, retErr error) {
 
 	defer func() {
 		// Wrap all returned errors with inproxyDialFailedError so callers can
@@ -1653,11 +1657,26 @@ func dialInproxy(
 	// and formatting when debug logging is off.
 	debugLogging := config.InproxyEnableWebRTCDebugLogging
 
+	brokerClient, brokerDialParams, release, err := dialParams.inproxyBrokerClientManager.GetBrokerClient(ctx, dialParams.NetworkID)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	// On success, release the broker client when activation ends or the
+	// returned connection closes. On failure, release it here.
+	defer func() {
+		if retConn == nil {
+			release()
+		}
+	}()
+
+	// Record the dial params used by this attempt for tunnel metrics.
+	dialParams.inproxyBrokerDialParameters = brokerDialParams
+
 	clientConfig := &inproxy.ClientConfig{
 		Logger:                       NoticeCommonLogger(debugLogging),
 		EnableWebRTCDebugLogging:     debugLogging,
 		BaseAPIParameters:            params,
-		BrokerClient:                 dialParams.inproxyBrokerClient,
+		BrokerClient:                 brokerClient,
 		WebRTCDialCoordinator:        webRTCDialInstance,
 		ReliableTransport:            reliableTransport,
 		DialNetworkProtocol:          networkProtocol,
@@ -1672,11 +1691,35 @@ func dialInproxy(
 		return nil, errors.Trace(err)
 	}
 
-	// The inproxy.ClientConn is stored in dialParams.inproxyConn in order to
-	// later fetch its connection ID and to facilitate broker/client replay.
-	dialParams.inproxyConn.Store(conn)
+	// Store the connection and broker client release function together for the
+	// broker/server relay, connection metrics and cleanup. Activation and
+	// connection Close may both call release; only the first call has an effect.
+	ownedConn := &inproxyBrokerOwnedConn{ClientConn: conn, release: release}
+	dialParams.inproxyConn.Store(ownedConn)
 
-	return conn, nil
+	return ownedConn, nil
+}
+
+func (dialParams *DialParameters) getInproxyConn() *inproxyBrokerOwnedConn {
+	conn, _ := dialParams.inproxyConn.Load().(*inproxyBrokerOwnedConn)
+	return conn
+}
+
+func (dialParams *DialParameters) releaseInproxyBrokerClient() {
+	if conn := dialParams.getInproxyConn(); conn != nil {
+		conn.release()
+	}
+}
+
+type inproxyBrokerOwnedConn struct {
+	*inproxy.ClientConn
+	release func()
+}
+
+func (conn *inproxyBrokerOwnedConn) Close() error {
+	err := conn.ClientConn.Close()
+	conn.release()
+	return err
 }
 
 // Fields are exported for JSON encoding in NoticeLivenessTest.

@@ -3840,6 +3840,7 @@ func (controller *Controller) runInproxyProxy() {
 		GetBrokerClient:                      controller.inproxyGetProxyBrokerClient,
 		GetBaseAPIParameters:                 controller.inproxyGetProxyAPIParameters,
 		MakeWebRTCDialCoordinator:            controller.inproxyMakeProxyWebRTCDialCoordinator,
+		GetAnnounceDelayParameters:           controller.inproxyGetProxyAnnounceDelayParameters,
 		ExcludeInterfaceName:                 controller.config.splitInterfaceUpstreamInterfaceName(),
 		HandleTacticsPayload:                 controller.inproxyHandleProxyTacticsPayload,
 		MaxCommonClients:                     controller.config.InproxyMaxCommonClients,
@@ -4102,6 +4103,19 @@ func (controller *Controller) inproxyMakeProxyWebRTCDialCoordinator() (
 	}
 
 	return webRTCDialInstance, nil
+}
+
+// inproxyGetProxyAnnounceDelayParameters returns the current tactics values
+// for proxy announcement staggering and failure backoff.
+func (controller *Controller) inproxyGetProxyAnnounceDelayParameters() (
+	time.Duration, time.Duration, float64) {
+
+	p := controller.config.GetParameters().Get()
+	defer p.Close()
+
+	return p.Duration(parameters.InproxyProxyAnnounceDelay),
+		p.Duration(parameters.InproxyProxyAnnounceMaxBackoffDelay),
+		p.Float(parameters.InproxyProxyAnnounceDelayJitter)
 }
 
 // inproxyHandleProxyTacticsPayload handles new tactics returned from the
