@@ -22,6 +22,7 @@ package psiphon
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	std_errors "errors"
 	"fmt"
 	"io"
@@ -44,44 +45,57 @@ import (
 	utls "github.com/Psiphon-Labs/utls"
 )
 
-// InproxyBrokerClientManager manages an InproxyBrokerClientInstance, an
-// in-proxy broker client, and its associated broker dial parameters, that
-// may be shared by multiple client dials or proxy instances. There is no
-// explicit close operation for the managed InproxyBrokerClientInstance.
+// InproxyBrokerClientManager manages a bounded set of
+// InproxyBrokerClientInstance values, each an in-proxy broker client with
+// its own broker dial parameters, for use by client dials or proxy
+// announcements. At most Inproxy{Client,Proxy}MaxBrokerClients are managed
+// at once.
 //
-// Once used, the current InproxyBrokerClientInstance and its broker client is
-// left actively connected to the broker, to minimize transport round trips
-// for additional requests.
+// One broker client at a time may be shared: the first to receive a valid
+// broker response is returned by subsequent GetBrokerClient calls and
+// remains connected to the broker, to minimize transport round trips for
+// subsequent requests. Other broker clients are not closed until released
+// by all callers. For in-proxy clients, a shared broker client with no
+// callers is closed after InproxyClientBrokerClientIdleTimeout.
+// GetBrokerClient documents acquisition, sharing and closure.
 //
-// The InproxyBrokerClientManager and its components implement a replay system
-// for broker client dials. As one broker client is shared access multiple
-// client in-proxy dials, the broker dial parameters are replayed
-// independently from tunnel dial parameters.
+// Each InproxyBrokerClientInstance binds one broker client to one broker,
+// round tripper and set of dial parameters for all of its requests, so that
+// round tripper success/failure callbacks set or clear replay for the
+// correct dial parameters while several broker clients are live. Broker
+// dial parameters are replayed independently of tunnel dial parameters,
+// as one broker client serves many in-proxy dials.
 //
-// The NewInproxyBrokerClientInstance layer provides a fixed association
-// between a broker client and its broker dial parameters, ensuring that
-// in-proxy success/failure callbacks reference the correct replay parameters
-// when setting or clearing replay.
-//
-// A new InproxyBrokerClientInstance, including the broker dial parameters and
-// broker client, is instantiated when the active network ID changes, using
-// tactics for the new network.
+// Network changes, tactics updates and controller shutdown close all broker
+// clients.
 type InproxyBrokerClientManager struct {
 	config  *Config
 	isProxy bool
 
 	tlsCache utls.ClientSessionCache
 
-	mutex                sync.Mutex
-	brokerSelectCount    int
-	networkID            string
-	brokerClientInstance *InproxyBrokerClientInstance
+	mutex        sync.Mutex
+	networkID    string
+	sharedClient *InproxyBrokerClientInstance
+
+	// clients tracks broker client instances until the broker client manager
+	// closes them, including those that have not dialed yet or have no
+	// requests in progress.
+	clients map[*InproxyBrokerClientInstance]*inproxyBrokerClientEntry
+	// sharedIdleTimer closes the shared client when it has no callers for
+	// InproxyClientBrokerClientIdleTimeout.
+	sharedIdleTimer *time.Timer
+	changed         chan struct{}
+	selector        inproxyBrokerSelector
+	proxyKeyOnce    sync.Once
+	proxyKey        inproxy.SessionPrivateKey
+	proxyKeyErr     error
 }
 
 // NewInproxyBrokerClientManager creates a new InproxyBrokerClientManager.
 // NewInproxyBrokerClientManager does not perform any network operations; the
-// managed InproxyBrokerClientInstance is initialized when used for a round
-// trip.
+// managed InproxyBrokerClientInstance values are initialized when used for a
+// round trip.
 func NewInproxyBrokerClientManager(
 	config *Config, isProxy bool, tlsCache utls.ClientSessionCache) *InproxyBrokerClientManager {
 
@@ -91,30 +105,28 @@ func NewInproxyBrokerClientManager(
 		tlsCache: tlsCache,
 	}
 
-	// b.brokerClientInstance is initialized on demand, when getBrokerClient
-	// is called.
+	// b.clients is initialized on demand, when GetBrokerClient is called.
+	// b.sharedClient is set when a client is selected for sharing; see
+	// clientResponseReceived.
 
 	return b
 }
 
 // TacticsApplied implements the TacticsAppliedReceiver interface, and is
-// called when tactics have changed, which triggers a broker client reset in
+// called when tactics have changed, which closes existing broker clients in
 // order to apply potentially changed parameters.
 func (b *InproxyBrokerClientManager) TacticsApplied() error {
 
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
-
-	// Don't reset when not yet initialized; b.brokerClientInstance is
-	// initialized only on demand.
-	if b.brokerClientInstance == nil {
+	if len(b.clients) == 0 {
+		// No clients to close; invalidate the cached broker selection so
+		// the next GetBrokerClient reinitializes it from current tactics.
+		b.selector.brokers = nil
 		return nil
 	}
-
-	// TODO: as a future future enhancement, don't reset when the tactics
-	// brokerSpecs.Hash() is unchanged?
-
-	return errors.Trace(b.reset(resetBrokerClientReasonTacticsApplied))
+	b.resetClientBrokerClientsLocked()
+	return nil
 }
 
 // NetworkChanged is called when the active network changes, to trigger a
@@ -123,182 +135,837 @@ func (b *InproxyBrokerClientManager) NetworkChanged() error {
 
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
-
-	// Don't reset when not yet initialized; b.brokerClientInstance is
-	// initialized only on demand.
-	if b.brokerClientInstance == nil {
-		return nil
-	}
-
-	return errors.Trace(b.reset(resetBrokerClientReasonNetworkChanged))
+	b.resetClientBrokerClientsLocked()
+	return nil
 }
 
 // GetBrokerClient returns the current, shared broker client and its
-// corresponding dial parameters (for metrics logging). If there is no
-// current broker client, if the network ID differs from the network ID
-// associated with the previous broker client, a new broker client is
-// initialized.
+// corresponding dial parameters (for metrics logging), along with a release
+// function. If there is no shared broker client, or if the network ID differs
+// from the network ID associated with existing broker clients, a new broker
+// client instance is initialized; in the latter case, existing broker clients
+// are first closed. A network ID that differs from the current network ID
+// returns an error.
+//
+// GetBrokerClient waits when Inproxy{Client,Proxy}MaxBrokerClients is reached
+// or, for personal pairing clients and proxies, when all fronting providers at
+// the current broker selection have been tried and InproxyBrokerClientManager
+// still manages broker clients from that selection. The wait ends and
+// acquisition is retried when a broker client becomes shared or unshared or
+// is closed. When tactics provides no broker specs, GetBrokerClient returns an
+// error immediately.
+//
+// ctx applies only while GetBrokerClient waits for a broker client. After
+// GetBrokerClient returns, canceling ctx does not close the broker client or
+// interrupt its requests, which use their own contexts. The caller must invoke
+// release when done with the broker client; subsequent invocations of release
+// have no effect.
+//
+// A broker client that is not shared closes when all callers have released it.
+// A shared broker client remains available for reuse; for in-proxy clients, it
+// closes after InproxyClientBrokerClientIdleTimeout with no callers, while
+// proxies retain it. A broker client that fails is no longer shared, and closes
+// when all callers have released it. NoMatch failover, network changes, tactics
+// updates and shutdown may close broker clients while they are in use.
 func (b *InproxyBrokerClientManager) GetBrokerClient(
-	networkID string) (*inproxy.BrokerClient, *InproxyBrokerDialParameters, error) {
-
-	b.mutex.Lock()
-
-	if b.brokerClientInstance == nil || b.networkID != networkID {
-		err := b.reset(resetBrokerClientReasonInit)
-		if err != nil {
-			b.mutex.Unlock()
-			return nil, nil, errors.Trace(err)
+	ctx context.Context, networkID string) (*inproxy.BrokerClient, *InproxyBrokerDialParameters, func(), error) {
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, nil, errors.Trace(err)
 		}
+		if b.config.GetNetworkID() != networkID {
+			return nil, nil, nil, errors.TraceNew("network changed")
+		}
+
+		instance, reused, changed, err := b.tryGetClientBrokerClient(networkID)
+		if err != nil {
+			return nil, nil, nil, errors.Trace(err)
+		}
+		if instance == nil {
+			select {
+			case <-ctx.Done():
+				return nil, nil, nil, errors.Trace(ctx.Err())
+			case <-changed:
+				continue
+			}
+		}
+
+		// Copy dial parameters with b.mutex released: failure callbacks
+		// take instance.mutex before b.mutex, so the reverse order could
+		// deadlock.
+		instance.mutex.Lock()
+		dialParams := *instance.brokerDialParams
+		instance.mutex.Unlock()
+		dialParams.isReuse = reused
+		release := sync.OnceFunc(func() {
+			b.mutex.Lock()
+			defer b.mutex.Unlock()
+			if entry := b.clients[instance]; entry != nil {
+				entry.refs--
+				if entry.refs == 0 && b.sharedClient != instance {
+					b.closeClientLocked(instance)
+				} else if entry.refs == 0 {
+					b.armSharedIdleTimerLocked(instance)
+				}
+			}
+		})
+		if err := ctx.Err(); err != nil {
+			release()
+			return nil, nil, nil, errors.Trace(err)
+		}
+		return instance.brokerClient, &dialParams, release, nil
 	}
-
-	brokerClientInstance := b.brokerClientInstance
-
-	// Release lock before calling brokerClientInstance.HasSuccess. Otherwise,
-	// there's a potential deadlock that would result from this code path
-	// locking InproxyBrokerClientManager.mutex then InproxyBrokerClientInstance.mutex,
-	// while the BrokerClientRoundTripperFailed code path locks in the reverse order.
-
-	b.mutex.Unlock()
-
-	// Set isReuse, which will record a metric indicating if this broker
-	// client has already been used for a successful round trip, a case which
-	// should result in faster overall dials.
-	//
-	// Limitations with HasSuccess, and the resulting isReuse metric: in some
-	// cases, it's possible that the underlying TLS connection is still
-	// redialed by net/http; or it's possible that the Noise session is
-	// invalid/expired and must be reestablished; or it can be the case that
-	// a shared broker client is only partially established at this point in
-	// time.
-	//
-	// Return a shallow copy of the broker dial params in order to record the
-	// correct isReuse, which varies depending on previous use.
-
-	brokerDialParams := *brokerClientInstance.brokerDialParams
-	brokerDialParams.isReuse = brokerClientInstance.HasSuccess()
-
-	// The b.brokerClientInstance.brokerClient is wired up to refer back to
-	// b.brokerClientInstance.brokerDialParams/roundTripper, etc.
-
-	return brokerClientInstance.brokerClient,
-		&brokerDialParams,
-		nil
 }
 
-func (b *InproxyBrokerClientManager) resetBrokerClientOnRoundTripperFailed(
-	brokerClientInstance *InproxyBrokerClientInstance) error {
+// brokerClientFailed stops sharing a failed broker client and prevents later
+// responses from making it shared again; see clientResponseReceived. Existing
+// callers may continue using it until they release it. It closes when all
+// callers have released it. Replay deletion and TLS session cache removal are
+// handled by the caller.
+func (b *InproxyBrokerClientManager) brokerClientFailed(instance *InproxyBrokerClientInstance) {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+	entry := b.clients[instance]
+	// Concurrent requests may report failures after this client was closed or
+	// marked failed; failure handling has already been completed.
+	if entry == nil || entry.failed {
+		return
+	}
+	entry.failed = true
+	// A failed client held by callers stays tracked until released, so it
+	// still counts toward the client limit and toward the fronting providers
+	// tried at the current broker selection. Unsharing it or closing it
+	// closes b.changed, waking GetBrokerClient calls blocked on either.
+	if b.sharedClient == instance {
+		b.stopSharedIdleTimerLocked()
+		b.sharedClient = nil
+		b.selector.sharedLost()
+		if entry.refs > 0 {
+			b.signalClientChangedLocked()
+		}
+	}
+	// With no callers holding the broker client, no release will close it.
+	if entry.refs == 0 {
+		// Closes b.changed, waking GetBrokerClient calls blocked on it.
+		b.closeClientLocked(instance)
+	}
+}
+
+// tryGetClientBrokerClient reuses the shared client or creates a new client.
+// When neither is possible, it returns a channel to wait on before retrying.
+func (b *InproxyBrokerClientManager) tryGetClientBrokerClient(
+	networkID string) (
+	instance *InproxyBrokerClientInstance, reused bool, changed <-chan struct{}, err error) {
 
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
-
-	if b.brokerClientInstance != brokerClientInstance {
-		// Ignore the reset if the signal comes from the non-current
-		// brokerClientInstance, which may occur when multiple in-flight
-		// round trips fail in close proximity.
-		return nil
-	}
-
-	return errors.Trace(b.reset(resetBrokerClientReasonRoundTripperFailed))
-}
-
-func (b *InproxyBrokerClientManager) resetBrokerClientOnNoMatch(
-	brokerClientInstance *InproxyBrokerClientInstance) error {
-
-	// Ignore the no match callback for proxies. For personal pairing, the
-	// broker rotation scheme has clients moving brokers to find relatively
-	// static proxies. For common pairing, we want to achieve balanced supply
-	// across brokers.
-	//
-	// Currently, inproxy.BrokerDialCoordinator.BrokerClientNoMatch is only
-	// wired up for clients, but this check ensures it'll still be ignored in
-	// case that changes.
-	if b.isProxy {
-		return nil
-	}
-
-	if b.brokerClientInstance != brokerClientInstance {
-		// See comment for same logic in resetBrokerClientOnRoundTripperFailed.
-		return nil
-	}
-
 	p := b.config.GetParameters().Get()
 	defer p.Close()
 
-	probability := parameters.InproxyClientNoMatchFailoverProbability
-	if b.config.IsInproxyClientPersonalPairingMode() {
-		probability = parameters.InproxyClientNoMatchFailoverPersonalProbability
-	}
-	if !p.WeightedCoinFlip(probability) {
-		return nil
+	if b.networkID != networkID || b.selector.brokers == nil {
+		b.resetClientBrokerClientsLocked()
+		b.networkID = networkID
 	}
 
-	return errors.Trace(b.reset(resetBrokerClientReasonRoundNoMatch))
+	// Reusing the shared client ends its idle period.
+	if b.sharedClient != nil {
+		b.stopSharedIdleTimerLocked()
+		b.clients[b.sharedClient].refs++
+		return b.sharedClient, true, nil, nil
+	}
+
+	if len(getInproxyBrokerSpecs(b.config, p, b.isProxy)) == 0 {
+		return nil, false, nil, errors.TraceNew("no broker specs")
+	}
+
+	// The client limit includes clients still in use after a failure.
+	limit := p.Int(parameters.InproxyClientMaxBrokerClients)
+	if b.isProxy {
+		limit = p.Int(parameters.InproxyProxyMaxBrokerClients)
+	}
+	if len(b.clients) >= limit {
+		if b.changed == nil {
+			b.changed = make(chan struct{})
+		}
+		return nil, false, b.changed, nil
+	}
+
+	liveClients := make([]*InproxyBrokerClientInstance, 0, len(b.clients))
+	for client := range b.clients {
+		liveClients = append(liveClients, client)
+	}
+	selection, err := b.selector.selectClient(b.config, p, networkID, b.isProxy, liveClients)
+	if err != nil {
+		return nil, false, nil, errors.Trace(err)
+	}
+	if selection == nil {
+		if b.changed == nil {
+			b.changed = make(chan struct{})
+		}
+		return nil, false, b.changed, nil
+	}
+	instance, err = NewInproxyBrokerClientInstance(b.config, p, b, networkID, b.isProxy, selection)
+	if err != nil {
+		return nil, false, nil, errors.Trace(err)
+	}
+	if b.clients == nil {
+		b.clients = make(map[*InproxyBrokerClientInstance]*inproxyBrokerClientEntry)
+	}
+	b.clients[instance] = &inproxyBrokerClientEntry{refs: 1}
+	instance.brokerSelection = b.selector.currentBrokerSelection
+	return instance, false, nil, nil
 }
 
-type resetBrokerClientReason int
-
-const (
-	resetBrokerClientReasonInit resetBrokerClientReason = iota + 1
-	resetBrokerClientReasonTacticsApplied
-	resetBrokerClientReasonNetworkChanged
-	resetBrokerClientReasonRoundTripperFailed
-	resetBrokerClientReasonRoundNoMatch
-)
-
-func (b *InproxyBrokerClientManager) reset(reason resetBrokerClientReason) error {
-
-	// Assumes b.mutex lock is held.
-
-	if b.brokerClientInstance != nil {
-
-		// Close the existing broker client. This will close all underlying
-		// network connections, interrupting any in-flight requests. This
-		// close is invoked in the resetBrokerClientOnRoundTripperFailed
-		// case, where it's expected that the round tripped has permanently
-		// failed.
-
-		b.brokerClientInstance.Close()
+// signalClientChangedLocked wakes waiting GetBrokerClient calls. The caller
+// must hold b.mutex.
+func (b *InproxyBrokerClientManager) signalClientChangedLocked() {
+	if b.changed != nil {
+		close(b.changed)
 	}
+	b.changed = make(chan struct{})
+}
 
-	// b.brokerSelectCount tracks the number of broker resets and is used to
-	// iterate over the brokers in a deterministic rotation when running in
-	// personal pairing mode.
+type inproxyBrokerClientEntry struct {
+	// GetBrokerClient calls not yet released.
+	refs int
+	// Set by brokerClientFailed. clientResponseReceived cannot make this client
+	// shared again, even after a successful response.
+	failed bool
+}
 
-	switch reason {
-	case resetBrokerClientReasonInit,
-		resetBrokerClientReasonTacticsApplied,
-		resetBrokerClientReasonNetworkChanged:
-		b.brokerSelectCount = 0
-
-	case resetBrokerClientReasonRoundTripperFailed,
-		resetBrokerClientReasonRoundNoMatch:
-		b.brokerSelectCount += 1
+func (b *InproxyBrokerClientManager) stopSharedIdleTimerLocked() {
+	// b.sharedIdleTimer is the current idle timer; only its callback may
+	// close the shared client. Stop does not cancel a callback that has
+	// already fired and is waiting for b.mutex, so also set
+	// b.sharedIdleTimer to nil so the callback's timer is not current,
+	// and expireSharedClientLocked returns without closing anything.
+	if b.sharedIdleTimer != nil {
+		b.sharedIdleTimer.Stop()
+		b.sharedIdleTimer = nil
 	}
+}
 
-	// Any existing broker client is removed, even if
-	// NewInproxyBrokerClientInstance fails. This ensures, for example, that
-	// an existing broker client is removed when its spec is no longer
-	// available in tactics.
+func (b *InproxyBrokerClientManager) armSharedIdleTimerLocked(instance *InproxyBrokerClientInstance) {
+	b.stopSharedIdleTimerLocked()
+	if b.isProxy {
+		return
+	}
+	p := b.config.GetParameters().Get()
+	timeout := p.Duration(parameters.InproxyClientBrokerClientIdleTimeout)
+	p.Close()
+	if timeout <= 0 {
+		return
+	}
+	var timer *time.Timer
+	timer = time.AfterFunc(timeout, func() {
+		b.mutex.Lock()
+		defer b.mutex.Unlock()
+		b.expireSharedClientLocked(instance, timer)
+	})
+	b.sharedIdleTimer = timer
+}
+
+func (b *InproxyBrokerClientManager) expireSharedClientLocked(instance *InproxyBrokerClientInstance, timer *time.Timer) {
+	entry := b.clients[instance]
+	// A different timer means this callback's timer was stopped or replaced. The
+	// same client may have been reused and released since then; this callback
+	// must not end its new idle period. Also require that it is still shared
+	// and has no callers holding it.
+	if timer == nil || timer != b.sharedIdleTimer || b.sharedClient != instance || entry == nil || entry.refs != 0 {
+		return
+	}
+	// Unlike a failure, idle expiry does not delete the stored replay dial
+	// parameters, and sharedLost allows the provider to be replayed again.
+	b.closeClientLocked(instance)
+	b.selector.sharedLost()
+}
+
+// closeClientLocked removes and closes a client, even if it is still in use.
+// The caller must hold b.mutex.
+func (b *InproxyBrokerClientManager) closeClientLocked(instance *InproxyBrokerClientInstance) {
+	if _, ok := b.clients[instance]; !ok {
+		return
+	}
+	delete(b.clients, instance)
+	if b.sharedClient == instance {
+		b.sharedClient = nil
+		b.stopSharedIdleTimerLocked()
+	}
+	_ = instance.Close()
+	b.signalClientChangedLocked()
+}
+
+// clientResponseReceived is called when instance receives a valid broker
+// response, and decides whether instance becomes the shared client.
+// retryableNoMatch indicates a client offer with no match that may be
+// retried on another broker; see
+// inproxy.BrokerDialCoordinator.BrokerClientResponseReceived.
+func (b *InproxyBrokerClientManager) clientResponseReceived(
+	instance *InproxyBrokerClientInstance, retryableNoMatch bool) {
+	b.mutex.Lock()t
+	defer b.mutex.Unlock()
+	if entry := b.clients[instance]; entry == nil || entry.failed {
+		return
+	}
+	if !b.selector.matchesCurrentBrokerSelection(instance) {
+		// A response from an earlier broker selection cannot change the shared
+		// client, even if the same broker has since been selected again.
+		if retryableNoMatch && !b.isProxy {
+			b.closeClientLocked(instance)
+		}
+		return
+	}
+	if retryableNoMatch && !b.isProxy {
+		if b.sharedClient != nil && b.sharedClient != instance {
+			b.closeClientLocked(instance)
+			return
+		}
+		p := b.config.GetParameters().Get()
+		probability := parameters.InproxyClientNoMatchFailoverProbability
+		if b.selector.personal {
+			probability = parameters.InproxyClientNoMatchFailoverPersonalProbability
+		}
+		failover := p.WeightedCoinFlip(probability)
+		p.Close()
+		if failover {
+			// Retain replay dial parameters and other clients. Close this client
+			// immediately, including any concurrent requests using it.
+			b.selector.noMatch(instance)
+			b.closeClientLocked(instance)
+			return
+		}
+	}
+	if b.sharedClient != nil {
+		// Keep the existing shared client. Both clients may still be in use.
+		return
+	}
+	b.sharedClient = instance
+	if b.clients[instance].refs == 0 {
+		b.armSharedIdleTimerLocked(instance)
+	}
+	b.signalClientChangedLocked()
+}
+
+// resetClientBrokerClientsLocked closes all clients, clears network and broker
+// selection state, and wakes waiting GetBrokerClient calls.
+// The caller must hold b.mutex.
+func (b *InproxyBrokerClientManager) resetClientBrokerClientsLocked() {
+	for instance := range b.clients {
+		_ = instance.Close()
+	}
+	clear(b.clients)
+	b.sharedClient = nil
+	b.stopSharedIdleTimerLocked()
 	b.networkID = ""
-	b.brokerClientInstance = nil
+	b.selector.reset()
+	b.signalClientChangedLocked()
+}
 
-	networkID := b.config.GetNetworkID()
+// closeClientBrokerClients closes all clients and resets broker selection.
+// It is safe to call on a nil receiver. The caller must not hold b.mutex.
+func (b *InproxyBrokerClientManager) closeClientBrokerClients() {
+	if b == nil {
+		return
+	}
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+	b.resetClientBrokerClientsLocked()
+}
 
-	brokerClientInstance, err := NewInproxyBrokerClientInstance(
-		b.config,
-		b,
-		networkID,
-		b.isProxy,
-		b.brokerSelectCount,
-		reason == resetBrokerClientReasonRoundNoMatch)
+func inproxyBrokerFrontingSpecs(broker *parameters.InproxyBrokerSpec, provider string) parameters.FrontingSpecs {
+	var specs parameters.FrontingSpecs
+	for _, spec := range broker.BrokerFrontingSpecs {
+		if spec.FrontingProviderID == provider {
+			specs = append(specs, spec)
+		}
+	}
+	return specs
+}
+
+func inproxyBrokerSupportsProvider(broker *parameters.InproxyBrokerSpec, provider string) bool {
+	for _, spec := range broker.BrokerFrontingSpecs {
+		if spec.FrontingProviderID == provider {
+			return true
+		}
+	}
+	return false
+}
+
+// inproxyBrokerSelector selects the broker, fronting provider and any dial
+// parameters for a new broker client. Its goal is to reach a working broker
+// when some fronting providers or brokers are blocked, trying providers in
+// an order that spreads load and favors proven dial parameters, while keeping
+// clients and proxies at brokers where they can be matched: common pairing
+// clients may explore across brokers, personal pairing clients and proxies
+// follow a derived broker order, and proxies stay at one broker to remain
+// findable. The per-mode strategies are described below.
+//
+// Common pairing clients:
+//   - Try different fronting providers across available brokers to find a
+//     working broker client, preferring eligible replay before fresh dial
+//     parameters.
+//   - Brokers are shuffled into an order that remains stable while the broker
+//     list is unchanged, including across resets. Fronting providers are
+//     shuffled separately and considered in rotating order.
+//   - Each provider progresses independently through the broker list
+//     (illustrated in the diagram below), skipping brokers that do not support
+//     it and wrapping at the end. A provider being tried for the first time
+//     starts after the most recently selected broker, or at the beginning if
+//     no broker has been selected.
+//   - When replay is enabled, prefer valid stored dial parameters for a
+//     provider with no broker clients tracked by InproxyBrokerClientManager
+//     and has not already been replayed during this search. Consider providers
+//     in rotating order, then search brokers from each provider's saved
+//     position. The first eligible replay found is selected.
+//   - Otherwise, choose the provider with the fewest tracked broker clients,
+//     breaking ties by rotating provider order. Search from that provider's
+//     saved position for the next supporting broker. Use eligible replay
+//     there if available; otherwise generate fresh dial parameters.
+//   - After selecting a broker, that provider's next search starts after it.
+//     Other providers retain their saved positions, and preference rotates
+//     to the next provider. A failed or canceled attempt does not undo this
+//     progress or restore a consumed replay attempt.
+//   - NoMatch failover skips the replay-first search for the next selection,
+//     but still allows replay at the broker selected through normal ordering.
+//   - Losing the shared client allows replay again and reshuffles provider
+//     order while retaining each provider's progress through the brokers.
+//     A full reset also clears that progress, retaining the random seed so
+//     unchanged broker specs produce the same broker order.
+//   - Attempts may use different brokers concurrently.
+//     InproxyBrokerClientManager limits the number of broker clients and
+//     reuses the shared client when one exists.
+//
+// Example search positions for common pairing clients:
+//
+//	Brokers:       [1, 2, 3, 4, ...]
+//	Provider A:              ^
+//	Provider B:        ^
+//
+// Here A's next search starts at broker 4 and B's starts at broker 2. When
+// replay is preferred, the search may skip earlier brokers to select one with
+// valid replay parameters for this provider. The provider's saved position
+// then advances past the selected broker. Searches wrap from the end of the
+// broker list to the beginning.
+//
+// Common pairing proxies:
+//   - Find a working fronting provider at one broker while keeping proxy
+//     announcements at that broker. When choosing a broker, eligible replay
+//     may take precedence over broker order. Providers are then tried at
+//     that broker, with the same wait for existing clients as for personal
+//     pairing clients, and the proxy advances only after its provider
+//     attempts are exhausted.
+//   - Broker order is shuffled using a random seed retained across resets.
+//   - Losing the shared client retains the current broker selection state.
+//     Providers still in use count as tried; other providers may be tried again.
+//   - The proxy continues announcing without changing brokers on NoMatch.
+//
+// Personal pairing clients:
+//   - Follow the broker order shared with the personal proxy, trying different
+//     fronting providers at each broker before moving on. NoMatch failover
+//     may move to the next broker before those attempts finish.
+//   - Broker order is derived from the personal compartment ID. A client and
+//     proxy with the same ID and broker list obtain the same order, limited
+//     to InproxyPersonalPairingMaxBrokerSpecCount brokers.
+//   - Each provider at the current broker is tried once. Replay is considered
+//     only at that broker.
+//   - After all providers have been tried, selection waits for clients from
+//     the current selection to close before advancing to the next broker.
+//   - NoMatch failover advances immediately, even when other broker clients
+//     are still held by callers. Losing the shared client restarts at the
+//     first broker.
+//
+// Personal pairing proxies:
+//   - Follow the broker order shared with the personal client, trying different
+//     fronting providers while remaining at the current broker for matching.
+//     Move on after its provider attempts are exhausted, not because an
+//     announcement returns NoMatch.
+//   - Broker order and its length limit are determined as for personal pairing
+//     clients. Replay does not change which broker is selected.
+//   - Providers are tried at one broker before advancing, as for common pairing
+//     proxies. Losing the shared client retains the current broker selection state.
+///  - On NoMatch the proxy keeps announcing at the same broker instead of
+//     rotating, so a client has an opportunity to find it.
+type inproxyBrokerSelector struct {
+	// Prepared during initialization and retained until reset. All broker
+	// clients created by this selector use the same compartment ID lists.
+	commonCompartmentIDs   []inproxy.ID
+	personalCompartmentIDs []inproxy.ID
+
+	// Whether a personal compartment ID is configured.
+	personal bool
+
+	// Whether this selector is used by a proxy rather than a client.
+	proxy bool
+
+	// Random seed for common pairing broker order, retained across resets.
+	// Personal pairing derives its seed from the compartment ID instead.
+	seed *prng.Seed
+
+	// Shuffled broker specs used when choosing the next broker to try.
+	// In personal pairing mode, the list is limited to
+	// InproxyPersonalPairingMaxBrokerSpecCount brokers.
+	brokers parameters.InproxyBrokerSpecsValue
+
+	// Current broker and provider attempts for personal pairing clients and
+	// proxies. Replaced when advancing or restarting selection, even when
+	// selecting the same broker again. Proxies retain it on shared client loss.
+	currentBrokerSelection *inproxyBrokerSelectionState
+
+	// Starting position in brokers for a provider not yet in
+	// nextBrokerByProvider.
+	// Updated to the position after each selected broker. For example, if the
+	// last selection used the second broker in the list, a provider with no
+	// saved position starts searching at the third broker. Positions wrap at
+	// the end of the list. Providers with saved positions are unaffected.
+	// Used only by common pairing clients.
+	nextBroker int
+
+	// Next position in brokers for each previously selected provider.
+	// Used only by common pairing clients.
+	nextBrokerByProvider map[string]int
+
+	// Try each fronting provider at the current broker before advancing,
+	// waiting for existing attempts to finish. NoMatch failover may advance
+	// earlier. Set for personal pairing clients and proxies.
+	exhaustBrokerProviders bool
+
+	// Distinct fronting provider IDs in shuffled order. Includes providers
+	// from all brokers for common pairing clients, or the current broker
+	// for personal pairing clients and proxies.
+	providers []string
+
+	// Starting position in providers for the next selection. Advances after
+	// each selection to rotate preference among equally eligible providers.
+	nextProvider int
+
+	// Providers whose replay dial parameters have already been selected.
+	// Cleared on reset or shared client loss, not when advancing brokers.
+	replayedByProvider map[string]bool
+
+	// Prefer broker order over replay when choosing the next broker after
+	// NoMatch failover. Replay at the selected broker is still allowed.
+	// Cleared after the next selection.
+	preferBrokerOrder bool
+}
+
+// inproxyBrokerSelectionState tracks attempts at one broker. Each selection
+// gets distinct selection state, even when selecting the same broker again.
+// Broker clients retain its pointer; matchesCurrentBrokerSelection compares
+// it with the selector's current state before sharing or counting clients at
+// the current broker. InproxyBrokerClientManager.mutex protects these fields
+// and pointer comparisons.
+type inproxyBrokerSelectionState struct {
+	// Selected broker spec. Nil until broker selection is complete; common
+	// pairing proxies may first advance index to a broker with replay.
+	spec *parameters.InproxyBrokerSpec
+
+	// Position in the selector's brokers list, before or after selection.
+	// May exceed the list length; lookup uses index modulo len(brokers).
+	index int
+
+	// Fronting provider IDs already attempted for this broker selection.
+	// Recorded before client creation, so construction failures count as
+	// attempts. Providers used by broker clients still tracked for this
+	// selection are also marked as tried.
+	tried map[string]bool
+}
+
+// reset clears broker selection while retaining the random seed. It creates
+// new selection state, so broker clients created earlier no longer belong to
+// the current selection. For personal pairing clients and proxies,
+// matchesCurrentBrokerSelection rejects those clients: they cannot become
+// shared or count toward providers tried at the current broker, even if the
+// same broker is selected again.
+func (s *inproxyBrokerSelector) reset() {
+	s.commonCompartmentIDs, s.personalCompartmentIDs = nil, nil
+	s.brokers = nil
+	s.exhaustBrokerProviders, s.personal, s.proxy = false, false, false
+	s.providers = nil
+	s.nextProvider, s.nextBroker = 0, 0
+	s.nextBrokerByProvider, s.replayedByProvider = nil, nil
+	s.preferBrokerOrder = false
+	s.currentBrokerSelection = &inproxyBrokerSelectionState{}
+}
+
+func (s *inproxyBrokerSelector) sharedLost() {
+	s.providers, s.replayedByProvider = nil, nil
+	s.nextProvider, s.preferBrokerOrder = 0, false
+	if s.exhaustBrokerProviders {
+		s.currentBrokerSelection.tried = nil
+		if !s.proxy {
+			// Restart personal pairing clients at the first broker with a new
+			// selection state. Proxies retain their selection state so other
+			// clients at that broker may still become shared.
+			s.currentBrokerSelection = &inproxyBrokerSelectionState{}
+		}
+	}
+}
+
+// advanceBroker records the next broker index and clears the tried providers.
+// New state distinguishes this selection even if the broker order wraps
+// around to a previously selected broker.
+func (s *inproxyBrokerSelector) advanceBroker(index int) {
+	s.currentBrokerSelection = &inproxyBrokerSelectionState{index: index}
+	s.providers = nil
+	s.nextProvider = 0
+}
+
+func (s *inproxyBrokerSelector) noMatch(instance *InproxyBrokerClientInstance) {
+	if s.exhaustBrokerProviders {
+		s.advanceBroker(instance.clientBrokerSelectCount + 1)
+	}
+	s.preferBrokerOrder = true
+}
+
+// matchesCurrentBrokerSelection reports whether the instance holds the
+// selector's current broker selection state. Selecting the same broker again
+// creates new state, so matching broker specs alone is insufficient. Common
+// pairing clients always return true because they select brokers independently
+// for each fronting provider.
+func (s *inproxyBrokerSelector) matchesCurrentBrokerSelection(instance *InproxyBrokerClientInstance) bool {
+	return !s.exhaustBrokerProviders || (s.currentBrokerSelection != nil && instance.brokerSelection == s.currentBrokerSelection)
+}
+
+func (s *inproxyBrokerSelector) initialize(config *Config, p parameters.ParametersAccessor, isProxy bool) error {
+	if s.currentBrokerSelection == nil {
+		s.currentBrokerSelection = &inproxyBrokerSelectionState{}
+	}
+	if len(s.brokers) > 0 {
+		return nil
+	}
+	commonIDs, personalIDs, err := prepareInproxyCompartmentIDs(config, p, isProxy)
 	if err != nil {
 		return errors.Trace(err)
 	}
-
-	b.networkID = networkID
-	b.brokerClientInstance = brokerClientInstance
-
+	specs := getInproxyBrokerSpecs(config, p, isProxy)
+	if len(specs) == 0 {
+		return errors.TraceNew("no broker specs")
+	}
+	s.personal, s.proxy = len(personalIDs) > 0, isProxy
+	s.exhaustBrokerProviders = s.personal || isProxy
+	seed := s.seed
+	if s.personal {
+		value := prng.Seed(personalIDs[0])
+		seed = &value
+	} else if seed == nil {
+		var err error
+		seed, err = prng.NewSeed()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		s.seed = seed
+	}
+	for _, i := range prng.NewPRNGWithSeed(seed).Perm(len(specs)) {
+		s.brokers = append(s.brokers, specs[i])
+	}
+	if s.personal {
+		if max := p.Int(parameters.InproxyPersonalPairingMaxBrokerSpecCount); max > 0 && max < len(s.brokers) {
+			s.brokers = s.brokers[:max]
+		}
+	}
+	s.commonCompartmentIDs, s.personalCompartmentIDs = commonIDs, personalIDs
 	return nil
+}
+
+func (s *inproxyBrokerSelector) initializeProviders(specs parameters.InproxyBrokerSpecsValue) {
+	if len(s.providers) > 0 {
+		return
+	}
+	seen := make(map[string]bool)
+	var ids []string
+	for _, broker := range specs {
+		for _, spec := range broker.BrokerFrontingSpecs {
+			if !seen[spec.FrontingProviderID] {
+				seen[spec.FrontingProviderID] = true
+				ids = append(ids, spec.FrontingProviderID)
+			}
+		}
+	}
+	for _, i := range prng.Perm(len(ids)) {
+		s.providers = append(s.providers, ids[i])
+	}
+}
+
+// selectClient selects a broker, fronting provider and optional replay dial
+// parameters for a new broker client, applying the strategies described on
+// inproxyBrokerSelector. It returns the selection without creating the
+// client or performing network operations.
+//
+// InproxyBrokerClientManager must hold its mutex and pass every broker client
+// it still tracks, including failed clients and clients from earlier broker
+// selections that callers still hold. All supplied clients count toward
+// provider usage; for personal pairing clients and proxies, only clients
+// holding the current broker selection state count toward providers tried
+// at that broker and the decision to wait before advancing.
+//
+// selectClient returns nil, nil when every provider at the current broker has
+// been tried and clients from that selection are still tracked; the caller
+// waits for a change and retries. Selection state, including positions,
+// tried providers and consumed replay, is updated before the client is
+// created, so a construction failure or cancellation does not undo it.
+func (s *inproxyBrokerSelector) selectClient(config *Config, p parameters.ParametersAccessor,
+	networkID string, proxy bool, live []*InproxyBrokerClientInstance) (*inproxyBrokerClientSelection, error) {
+	if err := s.initialize(config, p, proxy); err != nil {
+		return nil, errors.Trace(err)
+	}
+	// Restore the current broker's provider list before checking whether all
+	// providers have been tried. In proxy mode, shared client loss clears this
+	// list while retaining the selected broker.
+	if s.exhaustBrokerProviders && s.currentBrokerSelection.spec != nil {
+		s.initializeProviders(parameters.InproxyBrokerSpecsValue{s.currentBrokerSelection.spec})
+	}
+	counts := make(map[string]int)
+	currentLive := 0
+	for _, c := range live {
+		counts[c.frontingProviderID]++
+		// Older selections still count toward provider usage, but do not
+		// prevent advancing past the current broker or marking its providers
+		// as tried.
+		if s.matchesCurrentBrokerSelection(c) {
+			currentLive++
+			if s.exhaustBrokerProviders {
+				if s.currentBrokerSelection.tried == nil {
+					s.currentBrokerSelection.tried = make(map[string]bool)
+				}
+				s.currentBrokerSelection.tried[c.frontingProviderID] = true
+			}
+		}
+	}
+	if s.exhaustBrokerProviders && len(s.providers) > 0 && len(s.currentBrokerSelection.tried) == len(s.providers) {
+		if currentLive > 0 {
+			return nil, nil
+		}
+		s.advanceBroker(s.currentBrokerSelection.index + 1)
+	}
+	ttl := p.Duration(parameters.InproxyReplayBrokerDialParametersTTL)
+	replayEnabled := ttl > 0 && !config.DisableReplay && p.WeightedCoinFlip(parameters.InproxyReplayBrokerDialParametersProbability)
+	loaded := make(map[*parameters.InproxyBrokerSpec]*InproxyBrokerDialParameters)
+	load := func(spec *parameters.InproxyBrokerSpec) *InproxyBrokerDialParameters {
+		if params, ok := loaded[spec]; ok {
+			return params
+		}
+		params, err := loadInproxyBrokerReplayParameters(networkID, spec, ttl)
+		if err != nil {
+			NoticeWarning("loadInproxyBrokerReplayParameters failed: %v", errors.Trace(err))
+		}
+		loaded[spec] = params
+		return params
+	}
+	canReplay := func(provider string) bool {
+		return replayEnabled && counts[provider] == 0 && !s.replayedByProvider[provider] && (!s.exhaustBrokerProviders || !s.currentBrokerSelection.tried[provider])
+	}
+	specs := s.brokers
+	if s.exhaustBrokerProviders {
+		if s.currentBrokerSelection.spec == nil {
+			// Common pairing proxies may select a broker with replay dial
+			// parameters first. Changing brokers does not clear the record of
+			// providers already replayed during this search.
+			if !s.personal && replayEnabled && !s.preferBrokerOrder {
+				for i := range s.brokers {
+					index := (s.currentBrokerSelection.index + i) % len(s.brokers)
+					if params := load(s.brokers[index]); params != nil && canReplay(params.FrontedHTTPDialParameters.FrontingProviderID) {
+						s.currentBrokerSelection.index += i
+						break
+					}
+				}
+			}
+			s.currentBrokerSelection.spec = s.brokers[s.currentBrokerSelection.index%len(s.brokers)]
+		}
+		specs = parameters.InproxyBrokerSpecsValue{s.currentBrokerSelection.spec}
+	}
+	s.initializeProviders(specs)
+	if len(s.providers) == 0 {
+		return nil, errors.TraceNew("no broker fronting providers")
+	}
+	cursor := func(provider string) int {
+		if s.exhaustBrokerProviders {
+			return 0
+		}
+		if next, ok := s.nextBrokerByProvider[provider]; ok {
+			return next
+		}
+		return s.nextBroker
+	}
+	provider, index := "", -1
+	var replay *InproxyBrokerDialParameters
+	if !s.preferBrokerOrder {
+		for i := 0; i < len(s.providers) && index < 0; i++ {
+			id := s.providers[(s.nextProvider+i)%len(s.providers)]
+			if !canReplay(id) {
+				continue
+			}
+			for j := range specs {
+				k := (cursor(id) + j) % len(specs)
+				if !inproxyBrokerSupportsProvider(specs[k], id) {
+					continue
+				}
+				if params := load(specs[k]); params != nil && params.FrontedHTTPDialParameters.FrontingProviderID == id {
+					provider, index, replay = id, k, params
+					break
+				}
+			}
+		}
+	}
+	if index < 0 {
+		minCount := len(live) + 1
+		for i := range s.providers {
+			id := s.providers[(s.nextProvider+i)%len(s.providers)]
+			if s.exhaustBrokerProviders && s.currentBrokerSelection.tried[id] {
+				continue
+			}
+			if counts[id] < minCount {
+				provider, minCount = id, counts[id]
+			}
+		}
+		for i := range specs {
+			k := (cursor(provider) + i) % len(specs)
+			if inproxyBrokerSupportsProvider(specs[k], provider) {
+				index = k
+				break
+			}
+		}
+		if index < 0 {
+			return nil, errors.TraceNew("no broker for selected fronting provider")
+		}
+		if canReplay(provider) {
+			if params := load(specs[index]); params != nil && params.FrontedHTTPDialParameters.FrontingProviderID == provider {
+				replay = params
+			}
+		}
+	}
+	if replay != nil {
+		if s.replayedByProvider == nil {
+			s.replayedByProvider = make(map[string]bool)
+		}
+		s.replayedByProvider[provider] = true
+	}
+	for i, id := range s.providers {
+		if id == provider {
+			s.nextProvider = (i + 1) % len(s.providers)
+			break
+		}
+	}
+	position := index
+	if s.exhaustBrokerProviders {
+		if s.currentBrokerSelection.tried == nil {
+			s.currentBrokerSelection.tried = make(map[string]bool)
+		}
+		s.currentBrokerSelection.tried[provider] = true
+		position = s.currentBrokerSelection.index
+	} else {
+		if s.nextBrokerByProvider == nil {
+			s.nextBrokerByProvider = make(map[string]int)
+		}
+		s.nextBroker = (index + 1) % len(specs)
+		s.nextBrokerByProvider[provider] = s.nextBroker
+	}
+	s.preferBrokerOrder = false
+	return &inproxyBrokerClientSelection{
+		brokerSelectCount: position, brokerSpec: specs[index],
+		frontingSpecs:    inproxyBrokerFrontingSpecs(specs[index], provider),
+		brokerDialParams: replay, replayEnabled: replayEnabled,
+		commonCompartmentIDs: s.commonCompartmentIDs, personalCompartmentIDs: s.personalCompartmentIDs,
+	}, nil
 }
 
 // InproxyBrokerClientInstance pairs an inproxy.BrokerClient instance with an
@@ -306,6 +973,15 @@ func (b *InproxyBrokerClientManager) reset(reason resetBrokerClientReason) error
 // associated, underlying broker dial parameters. InproxyBrokerClientInstance
 // implements broker client dial replay.
 type InproxyBrokerClientInstance struct {
+	// Set at construction and read without
+	// InproxyBrokerClientInstance.mutex.
+	frontingProviderID string
+	// Broker selection index at construction; not changed by later selections.
+	clientBrokerSelectCount int
+	// Broker selection state when added to InproxyBrokerClientManager;
+	// never reassigned. matchesCurrentBrokerSelection compares this pointer
+	// with currentBrokerSelection.
+	brokerSelection               *inproxyBrokerSelectionState
 	config                        *Config
 	brokerClientManager           *InproxyBrokerClientManager
 	networkID                     string
@@ -321,9 +997,6 @@ type InproxyBrokerClientInstance struct {
 	disableWaitToShareSession     bool
 	sessionHandshakeTimeout       time.Duration
 	announceRequestTimeout        time.Duration
-	announceDelay                 time.Duration
-	announceMaxBackoffDelay       time.Duration
-	announceDelayJitter           float64
 	answerRequestTimeout          time.Duration
 	offerRequestTimeout           time.Duration
 	offerRequestPersonalTimeout   time.Duration
@@ -340,186 +1013,30 @@ type InproxyBrokerClientInstance struct {
 	lastSuccess     time.Time
 }
 
-// NewInproxyBrokerClientInstance creates a new InproxyBrokerClientInstance.
-// NewInproxyBrokerClientManager does not perform any network operations; the
-// new InproxyBrokerClientInstance is initialized when used for a round
-// trip.
+// inproxyBrokerClientSelection contains the broker and dial parameters for a
+// new client. brokerSpec retains all providers for replay hash validation;
+// frontingSpecs contains only the selected provider's specs.
+type inproxyBrokerClientSelection struct {
+	brokerSelectCount      int
+	brokerSpec             *parameters.InproxyBrokerSpec
+	frontingSpecs          parameters.FrontingSpecs
+	brokerDialParams       *InproxyBrokerDialParameters
+	replayEnabled          bool
+	commonCompartmentIDs   []inproxy.ID
+	personalCompartmentIDs []inproxy.ID
+}
+
 func NewInproxyBrokerClientInstance(
 	config *Config,
+	p parameters.ParametersAccessor,
 	brokerClientManager *InproxyBrokerClientManager,
 	networkID string,
 	isProxy bool,
-	brokerSelectCount int,
-	resetReasonNoMatch bool) (*InproxyBrokerClientInstance, error) {
+	selection *inproxyBrokerClientSelection) (*InproxyBrokerClientInstance, error) {
 
-	p := config.GetParameters().Get()
-	defer p.Close()
-
-	// Select common or personal compartment IDs. Clients must provide at
-	// least on compartment ID.
-	//
-	// A here check for !isProxy && len(commonCompartmentIDs) == 0 && len
-	// (personalCompartmentIDs) == 0 is now deferred until
-	// inproxy.DialClient, to allow broker connections for DSL requests
-	// without in-proxy compartment IDs.
-
-	commonCompartmentIDs, personalCompartmentIDs, err :=
-		prepareInproxyCompartmentIDs(config, p, isProxy)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if len(personalCompartmentIDs) > 1 {
-		return nil, errors.TraceNew("unexpected multiple personal compartment IDs")
-	}
-
-	// Select the broker to use, optionally favoring brokers with replay data.
-	// In the InproxyBrokerSpecs calls, the first non-empty tactics parameter
-	// list is used.
-	//
-	// Optional broker specs may be used to specify broker(s) dedicated to
-	// personal pairing, a configuration which can be used to reserve more
-	// capacity for personal pairing, given the simple rendezvous scheme below.
-
-	brokerSpecs := getInproxyBrokerSpecs(config, p, isProxy)
-	if len(brokerSpecs) == 0 {
-		return nil, errors.TraceNew("no broker specs")
-	}
-
-	// Select a broker.
-
-	// In common pairing mode, the available brokers are shuffled before
-	// selection, for random load balancing. Brokers with available dial
-	// parameter replay data are preferred. When rotating brokers due to a no
-	// match, the available replay data is ignored to increase the chance of
-	// selecting a different broker.
-	//
-	// In personal pairing mode, arrange for the proxy and client to
-	// rendezvous at the same broker by shuffling based on the shared
-	// personal compartment ID. Both the client and proxy will select the
-	// same initial broker, and fail over to other brokers in the same order.
-	// By design, clients will move between brokers aggressively, rotating on
-	// no-match responses and applying a shorter client offer timeout; while
-	// proxies will remain in place in order to be found. Since rendezvous
-	// depends on the ordering, each broker is selected in shuffle order;
-	// dial parameter replay data is used when available but not considered
-	// in selection ordering. The brokerSelectCount input is used to
-	// progressively index into the list of shuffled brokers.
-	//
-	// Potential future enhancements:
-	//
-	// - Use brokerSelectCount in the common pairing case as well, to ensure
-	//   that a no-match reset always selects a different broker; but, unlike
-	//   the personal pairing logic, still prefer brokers with replay rather
-	//   than following a strict shuffle order.
-	//
-	// - The common pairing no match broker rotation is intended to partially
-	//   mitigate poor common proxy load balancing that can leave a broker
-	//   with little proxy supply. A more robust mitigation would be to make
-	//   proxies distribute announcements across multiple or even all brokers.
-
-	personalPairing := len(personalCompartmentIDs) > 0
-
-	// In the following cases, don't shuffle or otherwise mutate the original
-	// broker spec slice, as it is a tactics parameter.
-
-	if personalPairing {
-
-		if len(personalCompartmentIDs[0]) < prng.SEED_LENGTH {
-			// Both inproxy.ID and prng.SEED_LENGTH are 32 bytes.
-			return nil, errors.TraceNew("unexpected ID length")
-		}
-
-		seed := prng.Seed(personalCompartmentIDs[0][0:prng.SEED_LENGTH])
-		PRNG := prng.NewPRNGWithSeed(&seed)
-
-		permutedIndexes := PRNG.Perm(len(brokerSpecs))
-
-		// Minimize rendezvous time by reducing the number of brokers this
-		// personal compartment ID maps over to. With a reduced number of
-		// possible brokers, the client and proxy have fewer brokers to check
-		// after fail overs.
-		//
-		// Given that permutedIndexes is a randomized shuffle, each personal
-		// compartment ID will map to a different set of reduced brokers,
-		// preserving overall broker load balancing.
-		//
-		// InproxyPersonalPairingMaxBrokerSpecCount will be configured high
-		// enough to also preserve reasonable availability when brokers fail.
-		// When InproxyPersonalPairingMaxBrokerSpecCount is 0, there is no max.
-		//
-		// This scheme depends on the len(personalCompartmentIDs) <= 1
-		// constraint checked above.
-
-		maxBrokerSpecs := p.Int(parameters.InproxyPersonalPairingMaxBrokerSpecCount)
-		if maxBrokerSpecs > 0 && len(permutedIndexes) > maxBrokerSpecs {
-			permutedIndexes = permutedIndexes[:maxBrokerSpecs]
-		}
-
-		selectedIndex := permutedIndexes[brokerSelectCount%len(permutedIndexes)]
-		brokerSpecs = brokerSpecs[selectedIndex : selectedIndex+1]
-
-	} else {
-
-		permutedIndexes := prng.Perm(len(brokerSpecs))
-		shuffledBrokerSpecs := make(parameters.InproxyBrokerSpecsValue, len(brokerSpecs))
-		for i, index := range permutedIndexes {
-			shuffledBrokerSpecs[i] = brokerSpecs[index]
-		}
-		brokerSpecs = shuffledBrokerSpecs
-	}
-
-	selectFirstCandidate := resetReasonNoMatch || personalPairing
-
-	// Replay broker dial parameters.
-
-	// In selectFirstCandidate cases, SelectCandidateWithNetworkReplayParameters
-	// will always select the first candidate, returning corresponding replay
-	// data when available. Otherwise, SelectCandidateWithNetworkReplayParameters
-	// iterates over the shuffled candidates and returns the first with replay data.
-
-	var brokerSpec *parameters.InproxyBrokerSpec
-	var brokerDialParams *InproxyBrokerDialParameters
-
-	// Replay is disabled when the TTL, InproxyReplayBrokerDialParametersTTL,
-	// is 0.
-	now := time.Now()
-	ttl := p.Duration(parameters.InproxyReplayBrokerDialParametersTTL)
-
-	replayEnabled := ttl > 0 &&
-		!config.DisableReplay &&
-		prng.FlipWeightedCoin(p.Float(parameters.InproxyReplayBrokerDialParametersProbability))
-
-	if replayEnabled {
-		brokerSpec, brokerDialParams, err =
-			SelectCandidateWithNetworkReplayParameters[parameters.InproxyBrokerSpec, InproxyBrokerDialParameters](
-				networkID,
-				selectFirstCandidate,
-				brokerSpecs,
-				func(spec *parameters.InproxyBrokerSpec) string { return spec.BrokerPublicKey },
-				func(spec *parameters.InproxyBrokerSpec, dialParams *InproxyBrokerDialParameters) bool {
-					// Replay the successful broker spec, if present, by
-					// comparing its hash with that of the candidate.
-					if !dialParams.LastUsedTimestamp.After(now.Add(-ttl)) {
-						return false
-					}
-					brokerSpecHash, err := spec.Hash()
-					if err != nil {
-						NoticeWarning("InproxyBrokerSpec.Hash failed: %v", errors.Trace(err))
-						return false
-					}
-					return bytes.Equal(dialParams.LastUsedBrokerSpecHash, brokerSpecHash)
-				})
-		if err != nil {
-			NoticeWarning("SelectCandidateWithNetworkReplayParameters failed: %v", errors.Trace(err))
-			// Continue without replay
-		}
-	}
-
-	// Select the first broker in the shuffle when replay is not enabled or in
-	// case SelectCandidateWithNetworkReplayParameters fails.
-	if brokerSpec == nil {
-		brokerSpec = brokerSpecs[0]
-	}
+	brokerSpec := selection.brokerSpec
+	brokerDialParams := selection.brokerDialParams
+	var err error
 
 	// Generate new broker dial parameters if not replaying. Later, isReplay
 	// is used to report the replay metric.
@@ -533,7 +1050,8 @@ func NewInproxyBrokerClientInstance(
 	}
 
 	if !isReplay {
-		brokerDialParams, err = MakeInproxyBrokerDialParameters(config, p, networkID, brokerSpec, brokerClientManager.tlsCache)
+		brokerDialParams, err = MakeInproxyBrokerDialParameters(
+			config, p, networkID, brokerSpec, selection.frontingSpecs, brokerClientManager.tlsCache)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -558,12 +1076,20 @@ func NewInproxyBrokerClientInstance(
 
 	roundTripper := NewInproxyBrokerRoundTripper(p, brokerDialParams)
 
-	// Clients always generate an ephemeral session key pair. Proxies may opt
-	// to use a long-lived key pair for proxied traffic attribution.
+	// All broker clients for a proxy must announce the same proxy ID. Reuse
+	// the InproxyBrokerClientManager key, generating it once if no key was
+	// configured.
 
 	var brokerClientPrivateKey inproxy.SessionPrivateKey
-	if isProxy && config.InproxyProxySessionPrivateKey != "" {
-		brokerClientPrivateKey, err = inproxy.SessionPrivateKeyFromString(config.InproxyProxySessionPrivateKey)
+	if isProxy {
+		brokerClientManager.proxyKeyOnce.Do(func() {
+			if config.InproxyProxySessionPrivateKey != "" {
+				brokerClientManager.proxyKey, brokerClientManager.proxyKeyErr = inproxy.SessionPrivateKeyFromString(config.InproxyProxySessionPrivateKey)
+			} else {
+				brokerClientManager.proxyKey, brokerClientManager.proxyKeyErr = inproxy.GenerateSessionPrivateKey()
+			}
+		})
+		brokerClientPrivateKey, err = brokerClientManager.proxyKey, brokerClientManager.proxyKeyErr
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -584,6 +1110,8 @@ func NewInproxyBrokerClientInstance(
 	// InproxyBrokerClientInstance for efficient lookup.
 
 	b := &InproxyBrokerClientInstance{
+		clientBrokerSelectCount:     selection.brokerSelectCount,
+		frontingProviderID:          brokerDialParams.FrontedHTTPDialParameters.FrontingProviderID,
 		config:                      config,
 		brokerClientManager:         brokerClientManager,
 		networkID:                   networkID,
@@ -591,16 +1119,13 @@ func NewInproxyBrokerClientInstance(
 		brokerPublicKey:             brokerPublicKey,
 		brokerRootObfuscationSecret: brokerRootObfuscationSecret,
 		brokerDialParams:            brokerDialParams,
-		replayEnabled:               replayEnabled,
+		replayEnabled:               selection.replayEnabled,
 		roundTripper:                roundTripper,
-		personalCompartmentIDs:      personalCompartmentIDs,
-		commonCompartmentIDs:        commonCompartmentIDs,
+		personalCompartmentIDs:      selection.personalCompartmentIDs,
+		commonCompartmentIDs:        selection.commonCompartmentIDs,
 
 		sessionHandshakeTimeout:       p.Duration(parameters.InproxySessionHandshakeRoundTripTimeout),
 		announceRequestTimeout:        p.Duration(parameters.InproxyProxyAnnounceRequestTimeout),
-		announceDelay:                 p.Duration(parameters.InproxyProxyAnnounceDelay),
-		announceMaxBackoffDelay:       p.Duration(parameters.InproxyProxyAnnounceMaxBackoffDelay),
-		announceDelayJitter:           p.Float(parameters.InproxyProxyAnnounceDelayJitter),
 		answerRequestTimeout:          p.Duration(parameters.InproxyProxyAnswerRequestTimeout),
 		offerRequestTimeout:           p.Duration(parameters.InproxyClientOfferRequestTimeout),
 		offerRequestPersonalTimeout:   p.Duration(parameters.InproxyClientOfferRequestPersonalTimeout),
@@ -625,16 +1150,14 @@ func NewInproxyBrokerClientInstance(
 	// enable wait for clients in case performance is poor or load on
 	// brokers -- due to simultaneous sessions -- is unexpectedly high.
 	//
-	// Note that, for broker dial parameter replay, the isValidReplay function
-	// currently invalidates replay only when broker specs change, and not
-	// when tactics in general change; so changes to these
-	// disableWaitToShareSession parameters would not properly invalidate
-	// replays in any case.
+	// The setting applies to concurrent requests on this broker client
+	// only. Before a decoded response makes this broker client shared, it
+	// has a single caller; see InproxyBrokerClientManager.GetBrokerClient
+	// and BrokerDialCoordinator.DisableWaitToShareSession.
 	//
-	// Potential future enhancements for in-proxy client broker clients
-	// include using a pool of broker clients, with each one potentially
-	// using a different broker and/or fronting spec. In this scenario,
-	// waitToShareSession would be less impactful.
+	// Broker dial replay validation checks for changes to broker specs, not
+	// tactics in general. Changes to disableWaitToShareSession do not
+	// invalidate stored replay dial parameters.
 
 	if isProxy {
 		b.disableWaitToShareSession = p.Bool(parameters.InproxyProxyDisableWaitToShareSession)
@@ -660,13 +1183,12 @@ func NewInproxyBrokerClientInstance(
 
 	// Initialize broker client. This will start with a fresh broker session.
 	//
-	// When resetBrokerClientOnRoundTripperFailed is invoked due to a failure
-	// at the transport level -- TLS or domain fronting --
-	// NewInproxyBrokerClientInstance is invoked, resetting both the broker
-	// client round tripper and the broker session. As a future enhancement,
-	// consider distinguishing between transport and session errors and
-	// retaining a valid established session when only the transport needs to
-	// be reset/retried.
+	// A transport-level failure -- TLS or domain fronting -- stops sharing
+	// the broker client, and the next acquisition constructs a new
+	// InproxyBrokerClientInstance, which resets both the round tripper and
+	// the broker session. As a future enhancement, consider distinguishing
+	// transport errors from session errors and retaining a valid
+	// established session when only the transport needs to be replaced.
 
 	b.brokerClient, err = inproxy.NewBrokerClient(b)
 	if err != nil {
@@ -881,10 +1403,11 @@ func (b *InproxyBrokerClientInstance) HasSuccess() bool {
 // trips.
 func (b *InproxyBrokerClientInstance) Close() error {
 
-	// Concurrency note: Close is called from InproxyBrokerClientManager with
-	// its mutex locked. Close must not lock InproxyBrokerClientInstance's
-	// mutex, or else there is a risk of deadlock similar to the HasSuccess
-	// case documented in InproxyBrokerClientManager.GetBrokerClient.
+	// Concurrency note: InproxyBrokerClientManager calls Close with its
+	// mutex locked. Close must not lock InproxyBrokerClientInstance's
+	// mutex since failure callbacks hold InproxyBrokerClientInstance.mutex
+	// while calling InproxyBrokerClientManager. Reversing that lock order
+	// could deadlock.
 
 	err := b.roundTripper.Close()
 	return errors.Trace(err)
@@ -964,12 +1487,20 @@ func (b *InproxyBrokerClientInstance) BrokerClientRoundTripperSucceeded(roundTri
 	// and more frequent broker round trips compared to tunnel dials, the TTL
 	// is only extended after some target duration has elapsed, to avoid
 	// excessive datastore writes.
+	//
+	// That duration is replayUpdateFrequency, measured from lastStoreReplay,
+	// which each broker client tracks separately. A newly constructed broker
+	// client therefore writes on its first success, persisting a proven
+	// configuration; with several broker clients racing, that is at most one
+	// write per broker client, after which each is limited by its own
+	// lastStoreReplay. The replay record is per broker, not per fronting
+	// provider, so any broker client's success may replace it; see
+	// InproxyBrokerDialParameters.
 
 	if b.replayEnabled && now.Sub(b.lastStoreReplay) > b.replayUpdateFrequency {
 		b.brokerDialParams.LastUsedTimestamp = time.Now()
 
-		err := SetNetworkReplayParameters[InproxyBrokerDialParameters](
-			b.networkID, b.brokerDialParams.brokerSpec.BrokerPublicKey, b.brokerDialParams)
+		err := storeInproxyBrokerReplayParameters(b.networkID, b.brokerDialParams)
 		if err != nil {
 			NoticeWarning("StoreBrokerDialParameters failed: %v", errors.Trace(err))
 			// Continue without persisting replay changes.
@@ -1003,13 +1534,13 @@ func (b *InproxyBrokerClientInstance) BrokerClientRoundTripperFailed(roundTrippe
 		return
 	}
 
-	// For common pairing proxies, skip both the replay deletion and the
-	// InproxyBrokerClientInstance reset for a short duration after a recent
-	// round trip success. In this case, subsequent broker requests will use
-	// the existing round tripper, wired up with the same dial parameters and
-	// fronting provider selection. If the failure was due to a transient
-	// TLS/TCP network failure, the net/http round tripper should establish a
-	// new connection on the next request.
+	// For common pairing proxies, skip both the replay deletion and demotion
+	// of a shared client for a short duration after a recent round trip
+	// success. In this case, subsequent broker requests will use the existing
+	// round tripper, wired up with the same dial parameters and fronting
+	// provider selection. If the failure was due to a transient TLS/TCP network
+	// failure, the net/http round tripper should establish a new connection on
+	// the next request.
 	//
 	// This retry is intended to retain proxy affinity with its currently
 	// selected broker in cases such as broker service upgrades/restarts or
@@ -1018,10 +1549,11 @@ func (b *InproxyBrokerClientInstance) BrokerClientRoundTripperFailed(roundTrippe
 	// no supply on a restarted broker).
 	//
 	// In common pairing mode, clients do not perform this retry and
-	// immediately reset, as is appropriate for the tunnel establishment
-	// race. In personal pairing mode, neither proxies nor clients retry and
-	// instead follow the personal pairing broker selection scheme in an
-	// effort to rendezvous at the same broker with minimal delay.
+	// immediately stop sharing the failed broker client, as is appropriate
+	// for the tunnel establishment race. In personal pairing mode, neither
+	// proxies nor clients retry and instead follow the personal pairing
+	// broker selection scheme in an effort to rendezvous at the same broker
+	// with minimal delay.
 	//
 	// A delay before retrying announce requests is appropriate, but there is
 	// no delay added here since Proxy.proxyOneClient already schedule delays
@@ -1049,23 +1581,15 @@ func (b *InproxyBrokerClientInstance) BrokerClientRoundTripperFailed(roundTrippe
 		return
 	}
 
-	// Delete any persistent replay dial parameters. Unlike with the success
-	// case, consecutive, repeated deletes shouldn't write to storage, so
-	// they are not avoided.
+	// Delete stored replay dial parameters unless selected for retention.
 
 	if b.replayEnabled &&
 		!prng.FlipWeightedCoin(b.replayRetainFailedProbability) {
 
-		// Limitation: there's a race condition with multiple
-		// InproxyBrokerClientInstances writing to the replay datastore for
-		// the same broker, such as in the case where there's a dual-mode
-		// in-proxy client and proxy; this delete could potentially clobber a
-		// concurrent fresh replay store after a success.
-		//
-		// TODO: add an additional storage key distinguisher for each instance?
-
-		err := DeleteNetworkReplayParameters[InproxyBrokerDialParameters](
-			b.networkID, b.brokerDialParams.brokerSpec.BrokerPublicKey)
+		// Delete only the record this broker client loaded or stored.
+		// Another broker client may have stored different parameters
+		// under the same key.
+		err := deleteInproxyBrokerReplayParameters(b.networkID, b.brokerDialParams)
 		if err != nil {
 			NoticeWarning("DeleteBrokerDialParameters failed: %v", errors.Trace(err))
 			// Continue without resetting replay.
@@ -1079,44 +1603,31 @@ func (b *InproxyBrokerClientInstance) BrokerClientRoundTripperFailed(roundTrippe
 		hardcodedCache.RemoveCacheEntry()
 	}
 
-	// Invoke resetBrokerClientOnRoundTripperFailed to signal the
-	// InproxyBrokerClientManager to create a new
-	// InproxyBrokerClientInstance, with new dial parameters and a new round
-	// tripper, after a failure.
-	//
-	// This InproxyBrokerClientInstance doesn't change its dial parameters or
-	// round tripper to ensure that any concurrent usage retains affinity
-	// with the same parameters and broker.
+	// Mark this broker client as failed so it cannot be shared again. Existing
+	// callers retain the same broker, dial parameters and round tripper until
+	// they release it; see brokerClientFailed.
 	//
 	// Limitation: a transport-level failure may unnecessarily reset the
 	// broker session state; see comment in NewInproxyBrokerClientInstance.
 
-	err := b.brokerClientManager.resetBrokerClientOnRoundTripperFailed(b)
-	if err != nil {
-		NoticeWarning("reset broker client failed: %v", errors.Trace(err))
-		// Continue with old broker client instance.
-	}
+	b.brokerClientManager.brokerClientFailed(b)
 }
 
 // Implements the inproxy.BrokerDialCoordinator interface.
-func (b *InproxyBrokerClientInstance) BrokerClientNoMatch(roundTripper inproxy.RoundTripper) {
-	b.mutex.Lock()
-	defer b.mutex.Unlock()
-
+func (b *InproxyBrokerClientInstance) BrokerClientResponseReceived(
+	roundTripper inproxy.RoundTripper, retryableNoMatch bool) {
+	// roundTripper does not change after construction, so this check does not
+	// require InproxyBrokerClientInstance.mutex.
 	if rt, ok := roundTripper.(*InproxyBrokerRoundTripper); !ok || rt != b.roundTripper {
 		// See roundTripper check comment in BrokerClientRoundTripperFailed.
-		NoticeError("BrokerClientNoMatch: roundTripper instance mismatch")
+		NoticeError("BrokerClientResponseReceived: roundTripper instance mismatch")
 		return
 	}
 
 	// Any persistent replay dial parameters are retained and not deleted,
 	// since the broker client successfully transacted with the broker.
 
-	err := b.brokerClientManager.resetBrokerClientOnNoMatch(b)
-	if err != nil {
-		NoticeWarning("reset broker client failed: %v", errors.Trace(err))
-		// Continue with old broker client instance.
-	}
+	b.brokerClientManager.clientResponseReceived(b, retryableNoMatch)
 }
 
 // Implements the inproxy.BrokerDialCoordinator interface.
@@ -1132,21 +1643,6 @@ func (b *InproxyBrokerClientInstance) AnnounceRequestTimeout() time.Duration {
 // Implements the inproxy.BrokerDialCoordinator interface.
 func (b *InproxyBrokerClientInstance) SessionHandshakeRoundTripTimeout() time.Duration {
 	return b.sessionHandshakeTimeout
-}
-
-// Implements the inproxy.BrokerDialCoordinator interface.
-func (b *InproxyBrokerClientInstance) AnnounceDelay() time.Duration {
-	return b.announceDelay
-}
-
-// Implements the inproxy.BrokerDialCoordinator interface.
-func (b *InproxyBrokerClientInstance) AnnounceMaxBackoffDelay() time.Duration {
-	return b.announceMaxBackoffDelay
-}
-
-// Implements the inproxy.BrokerDialCoordinator interface.
-func (b *InproxyBrokerClientInstance) AnnounceDelayJitter() float64 {
-	return b.announceDelayJitter
 }
 
 // Implements the inproxy.BrokerDialCoordinator interface.
@@ -1193,10 +1689,26 @@ func (b *InproxyBrokerClientInstance) DSLRequestTimeout() time.Duration {
 //
 // InproxyBrokerDialParameters is similar to tunnel DialParameters, but is
 // specific to the in-proxy broker dial phase.
+// 
+// The replay record is keyed by network ID and broker public key. There is
+// one record per broker, holding the last successful fronting provider and
+// dial parameters, and it is shared by the client and proxy broker client
+// managers, whose broker clients use the same broker specs. Concurrent broker
+// clients for the same broker may each succeed; the last writer's
+// configuration is retained. Every stored configuration succeeded, and
+// broker selection covers other fronting providers without replay, so this
+// overwrite is accepted. Failure deletes the record only when it still holds
+// the bytes this broker client loaded or stored; see replayRecord.
 type InproxyBrokerDialParameters struct {
 	brokerSpec *parameters.InproxyBrokerSpec `json:"-"`
 	isReplay   bool                          `json:"-"`
 	isReuse    bool                          `json:"-"`
+	// Stored bytes used to check for changes before deleting replay
+	// parameters. A broker client whose record was replaced by another
+	// broker client's success cannot delete that newer record.
+	// Protected by InproxyBrokerClientInstance.mutex along with the
+	// other dial parameters.
+	replayRecord []byte
 
 	LastUsedTimestamp      time.Time
 	LastUsedBrokerSpecHash []byte
@@ -1204,12 +1716,99 @@ type InproxyBrokerDialParameters struct {
 	FrontedHTTPDialParameters *FrontedMeekDialParameters
 }
 
+// loadInproxyBrokerReplayParameters loads valid replay dial parameters or
+// deletes an invalid record. Both operations use one transaction so validation
+// cannot delete a record stored concurrently by another client. The hash is
+// checked against the full broker spec, including all fronting providers.
+func loadInproxyBrokerReplayParameters(
+	networkID string, brokerSpec *parameters.InproxyBrokerSpec,
+	ttl time.Duration) (*InproxyBrokerDialParameters, error) {
+
+	hash, err := brokerSpec.Hash()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	key := makeNetworkReplayParametersKey[InproxyBrokerDialParameters](networkID, brokerSpec.BrokerPublicKey)
+	var params *InproxyBrokerDialParameters
+	err = datastoreUpdate(func(tx *datastoreTx) error {
+		bucket := tx.bucket(datastoreNetworkReplayParametersBucket)
+		value := bucket.get(key)
+		if value == nil {
+			return nil
+		}
+		if err := json.Unmarshal(value, &params); err != nil || params == nil ||
+			params.FrontedHTTPDialParameters == nil ||
+			!params.LastUsedTimestamp.After(time.Now().Add(-ttl)) ||
+			!bytes.Equal(params.LastUsedBrokerSpecHash, hash) ||
+			!inproxyBrokerSupportsProvider(brokerSpec, params.FrontedHTTPDialParameters.FrontingProviderID) {
+			params = nil
+			return errors.Trace(bucket.delete(key))
+		}
+		// Preserve the original bytes: re-marshalling could drop unknown
+		// fields and no longer match the stored record during deletion.
+		// Copy them because bucket values may only live for the transaction.
+		params.replayRecord = append([]byte(nil), value...)
+		params.brokerSpec = brokerSpec
+		return nil
+	})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return params, nil
+}
+
+// storeInproxyBrokerReplayParameters stores successful broker dial parameters
+// and saves the stored bytes for comparison before deletion on failure.
+//
+// Unlike SetNetworkReplayParameters, this function retains the encoded record.
+// It updates replayRecord only after a successful write. When params belongs to
+// an InproxyBrokerClientInstance, the caller must hold its mutex.
+func storeInproxyBrokerReplayParameters(networkID string, params *InproxyBrokerDialParameters) error {
+	value, err := json.Marshal(params)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	key := makeNetworkReplayParametersKey[InproxyBrokerDialParameters](networkID, params.brokerSpec.BrokerPublicKey)
+	if err := setBucketValue(datastoreNetworkReplayParametersBucket, key, value); err != nil {
+		return errors.Trace(err)
+	}
+	params.replayRecord = value
+	return nil
+}
+
+// deleteInproxyBrokerReplayParameters deletes the record only if it matches
+// the bytes previously loaded or stored. The comparison and deletion use one
+// transaction to preserve changes made by another client. The caller must hold
+// InproxyBrokerClientInstance.mutex when params belongs to a broker client
+// instance.
+func deleteInproxyBrokerReplayParameters(networkID string, params *InproxyBrokerDialParameters) error {
+	if len(params.replayRecord) == 0 {
+		// This broker client has neither loaded nor stored replay dial
+		// parameters.
+		return nil
+	}
+	key := makeNetworkReplayParametersKey[InproxyBrokerDialParameters](networkID, params.brokerSpec.BrokerPublicKey)
+	err := datastoreUpdate(func(tx *datastoreTx) error {
+		bucket := tx.bucket(datastoreNetworkReplayParametersBucket)
+		if !bytes.Equal(bucket.get(key), params.replayRecord) {
+			return nil
+		}
+		return errors.Trace(bucket.delete(key))
+	})
+	if err != nil {
+		return errors.Trace(err)
+	}
+	params.replayRecord = nil
+	return nil
+}
+
 // MakeInproxyBrokerDialParameters creates a new InproxyBrokerDialParameters.
 func MakeInproxyBrokerDialParameters(
 	config *Config,
 	p parameters.ParametersAccessor,
-	networkID string,
+	networkID string, // currently unused; retained for possible future use.
 	brokerSpec *parameters.InproxyBrokerSpec,
+	frontingSpecs parameters.FrontingSpecs,
 	tlsCache utls.ClientSessionCache) (*InproxyBrokerDialParameters, error) {
 
 	currentTimestamp := time.Now()
@@ -1245,7 +1844,7 @@ func MakeInproxyBrokerDialParameters(
 		config,
 		p,
 		nil,
-		brokerSpec.BrokerFrontingSpecs,
+		frontingSpecs,
 		nil,
 		true,
 		skipVerify,
@@ -1483,9 +2082,17 @@ func (rt *InproxyBrokerRoundTripper) RoundTrip(
 	// connection, while concurrent round trips over HTTP connections may
 	// spawn additional TLS persistent connections.
 	//
-	// There is no retry here if DialMeek fails, as higher levels will invoke
-	// BrokerClientRoundTripperFailed on failure, clear any replay, select
-	// new dial parameters, and retry.
+	// DialMeek is attempted once for this round tripper. Transport failures
+	// invoke BrokerClientRoundTripperFailed; subsequent attempts obtain a
+	// client from InproxyBrokerClientManager. Caller cancellation does not
+	// invalidate replay.
+	//
+	// If the caller cancels or reaches its deadline during the initial dial,
+	// the error remains cached and this round tripper cannot be used again.
+	// InproxyBrokerClientManager does not reuse a client until it receives
+	// a decoded broker response, so this client only has a single caller.
+	// Its release closes it. Sharing clients before a response would require
+	// revisiting this behavior.
 
 	if atomic.CompareAndSwapInt32(&rt.dial, 0, 1) {
 
@@ -1496,13 +2103,12 @@ func (rt *InproxyBrokerRoundTripper) RoundTrip(
 			rt.brokerDialParams.FrontedHTTPDialParameters.meekConfig,
 			rt.brokerDialParams.FrontedHTTPDialParameters.dialConfig)
 
-		if err != nil && ctx.Err() != context.Canceled {
+		if err != nil && ctx.Err() == nil {
 
 			// DialMeek performs an initial TLS handshake. DialMeek errors,
-			// excluding a cancelled context as happens on shutdown, are
-			// classified as as RoundTripperFailedErrors, which will invoke
-			// BrokerClientRoundTripperFailed, resetting the round tripper
-			// and clearing replay parameters.
+			// excluding caller cancellation or deadline expiry, are
+			// classified as RoundTripperFailedErrors. These invoke
+			// BrokerClientRoundTripperFailed to handle sharing and replay.
 
 			err = inproxy.NewRoundTripperFailedError(err)
 		}
@@ -1527,9 +2133,8 @@ func (rt *InproxyBrokerRoundTripper) RoundTrip(
 
 		if rt.dialErr != nil {
 
-			// There is no NewRoundTripperFailedError wrapping here, as the
-			// DialMeek caller will wrap its error and
-			// BrokerClientRoundTripperFailed will be invoked already.
+			// Return the error as classified by the DialMeek caller, including
+			// caller cancellation errors that do not invalidate replay.
 
 			return nil, errors.Trace(rt.dialErr)
 		}
@@ -1572,25 +2177,24 @@ func (rt *InproxyBrokerRoundTripper) RoundTrip(
 			//
 			// In this scenario, we can reuse the existing round tripper and
 			// it may be counterproductive to return a RoundTripperFailedError
-			// which will trigger a clearing of any broker dial replay
-			// parameters as well as reseting the round tripper.
+			// which may delete replay dial parameters and stop sharing this
+			// broker client, depending on the failure-retention policy.
 			//
 			// When the round trip duration is sufficiently short, much
 			// shorter than expected round trip timeouts, this is still
 			// classified as a RoundTripperFailedError error, as it is more
 			// likely due to a more serious issue between the CDN and broker.
 
-			if rt.failureThreshold > 0 &&
+			if ctx.Err() == nil && rt.failureThreshold > 0 &&
 				roundTripDuration <= rt.failureThreshold {
 
 				err = inproxy.NewRoundTripperFailedError(err)
 			}
 		}
-	} else if ctx.Err() != context.Canceled {
+	} else if ctx.Err() == nil {
 
-		// Other round trip errors, including TLS failures and client-side
-		// timeouts, but excluding a cancelled context as happens on
-		// shutdown, are classified as RoundTripperFailedErrors.
+		// Request timeouts and other transport errors count as failures only
+		// while the caller's context is still active.
 
 		err = inproxy.NewRoundTripperFailedError(err)
 	}
@@ -1600,7 +2204,9 @@ func (rt *InproxyBrokerRoundTripper) RoundTrip(
 
 	responsePayload, err := io.ReadAll(response.Body)
 	if err != nil {
-		err = inproxy.NewRoundTripperFailedError(err)
+		if ctx.Err() == nil {
+			err = inproxy.NewRoundTripperFailedError(err)
+		}
 		return nil, errors.Trace(err)
 	}
 
