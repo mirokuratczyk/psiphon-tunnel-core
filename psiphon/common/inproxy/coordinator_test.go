@@ -44,12 +44,10 @@ type testBrokerDialCoordinator struct {
 	brokerClientRoundTripperSucceeded func(RoundTripper)
 	brokerClientRoundTripperFailed    func(RoundTripper)
 	brokerClientNoMatch               func(RoundTripper)
+	brokerClientResponseReceived      func(RoundTripper, bool)
 	metricsForBrokerRequests          common.LogFields
 	sessionHandshakeRoundTripTimeout  time.Duration
 	announceRequestTimeout            time.Duration
-	announceDelay                     time.Duration
-	announceMaxBackoffDelay           time.Duration
-	announceDelayJitter               float64
 	answerRequestTimeout              time.Duration
 	offerRequestTimeout               time.Duration
 	offerRequestPersonalTimeout       time.Duration
@@ -125,10 +123,16 @@ func (t *testBrokerDialCoordinator) BrokerClientRoundTripperFailed(roundTripper 
 	t.brokerClientRoundTripperFailed(roundTripper)
 }
 
-func (t *testBrokerDialCoordinator) BrokerClientNoMatch(roundTripper RoundTripper) {
+func (t *testBrokerDialCoordinator) BrokerClientResponseReceived(
+	roundTripper RoundTripper, retryableNoMatch bool) {
 	t.mutex.Lock()
 	defer t.mutex.Unlock()
-	t.brokerClientNoMatch(roundTripper)
+	if t.brokerClientResponseReceived != nil {
+		t.brokerClientResponseReceived(roundTripper, retryableNoMatch)
+	}
+	if retryableNoMatch && t.brokerClientNoMatch != nil {
+		t.brokerClientNoMatch(roundTripper)
+	}
 }
 
 func (t *testBrokerDialCoordinator) MetricsForBrokerRequests() common.LogFields {
@@ -147,24 +151,6 @@ func (t *testBrokerDialCoordinator) AnnounceRequestTimeout() time.Duration {
 	t.mutex.Lock()
 	defer t.mutex.Unlock()
 	return t.announceRequestTimeout
-}
-
-func (t *testBrokerDialCoordinator) AnnounceDelay() time.Duration {
-	t.mutex.Lock()
-	defer t.mutex.Unlock()
-	return t.announceDelay
-}
-
-func (t *testBrokerDialCoordinator) AnnounceMaxBackoffDelay() time.Duration {
-	t.mutex.Lock()
-	defer t.mutex.Unlock()
-	return t.announceMaxBackoffDelay
-}
-
-func (t *testBrokerDialCoordinator) AnnounceDelayJitter() float64 {
-	t.mutex.Lock()
-	defer t.mutex.Unlock()
-	return t.announceDelayJitter
 }
 
 func (t *testBrokerDialCoordinator) AnswerRequestTimeout() time.Duration {

@@ -583,7 +583,7 @@ func inproxyBrokerSupportsProvider(broker *parameters.InproxyBrokerSpec, provide
 //     clients. Replay does not change which broker is selected.
 //   - Providers are tried at one broker before advancing, as for common pairing
 //     proxies. Losing the shared client retains the current broker selection state.
-///  - On NoMatch the proxy keeps announcing at the same broker instead of
+//   - On NoMatch the proxy keeps announcing at the same broker instead of
 //     rotating, so a client has an opportunity to find it.
 type inproxyBrokerSelector struct {
 	// Prepared during initialization and retained until reset. All broker
@@ -1200,7 +1200,11 @@ func NewInproxyBrokerClientInstance(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	NoticeInfo("inproxy: selected broker %s", inproxy.ID(brokerID))
+	// Include the fronting provider and replay state, as concurrent broker
+	// clients may select the same broker via different providers.
+	NoticeInfo(
+		"inproxy: selected broker %s fronting provider %s replay %t",
+		inproxy.ID(brokerID), b.frontingProviderID, isReplay)
 
 	return b, nil
 }
@@ -1689,7 +1693,7 @@ func (b *InproxyBrokerClientInstance) DSLRequestTimeout() time.Duration {
 //
 // InproxyBrokerDialParameters is similar to tunnel DialParameters, but is
 // specific to the in-proxy broker dial phase.
-// 
+//
 // The replay record is keyed by network ID and broker public key. There is
 // one record per broker, holding the last successful fronting provider and
 // dial parameters, and it is shared by the client and proxy broker client
