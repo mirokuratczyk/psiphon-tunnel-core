@@ -402,7 +402,7 @@ func (b *InproxyBrokerClientManager) closeClientLocked(instance *InproxyBrokerCl
 // inproxy.BrokerDialCoordinator.BrokerClientResponseReceived.
 func (b *InproxyBrokerClientManager) clientResponseReceived(
 	instance *InproxyBrokerClientInstance, retryableNoMatch bool) {
-	b.mutex.Lock()t
+	b.mutex.Lock()
 	defer b.mutex.Unlock()
 	if entry := b.clients[instance]; entry == nil || entry.failed {
 		return
