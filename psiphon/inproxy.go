@@ -205,7 +205,7 @@ func (b *InproxyBrokerClientManager) GetBrokerClient(
 				if entry.refs == 0 && b.sharedClient != instance {
 					b.closeClientLocked(instance)
 				} else if entry.refs == 0 {
-					b.armSharedIdleTimerLocked(instance)
+					b.startSharedIdleTimerLocked(instance)
 				}
 			}
 		})
@@ -345,7 +345,10 @@ func (b *InproxyBrokerClientManager) stopSharedIdleTimerLocked() {
 	}
 }
 
-func (b *InproxyBrokerClientManager) armSharedIdleTimerLocked(instance *InproxyBrokerClientInstance) {
+// startSharedIdleTimerLocked starts idle timeout for the shared client
+// instance, when it reaches zero leases and InproxyClientBrokerClientIdleTimeout > 0.
+// Any previous timer is stopped first.
+func (b *InproxyBrokerClientManager) startSharedIdleTimerLocked(instance *InproxyBrokerClientInstance) {
 	b.stopSharedIdleTimerLocked()
 	if b.isProxy {
 		return
@@ -365,6 +368,10 @@ func (b *InproxyBrokerClientManager) armSharedIdleTimerLocked(instance *InproxyB
 	b.sharedIdleTimer = timer
 }
 
+// expireSharedClientLocked is the idle timer callback. It closes instance
+// only if timer is still the current b.sharedIdleTimer and instance is
+// still the shared client with no outstanding leases. The caller must hold
+// b.mutex.
 func (b *InproxyBrokerClientManager) expireSharedClientLocked(instance *InproxyBrokerClientInstance, timer *time.Timer) {
 	entry := b.clients[instance]
 	// A different timer means this callback's timer was stopped or replaced. The
@@ -441,7 +448,7 @@ func (b *InproxyBrokerClientManager) clientResponseReceived(
 	}
 	b.sharedClient = instance
 	if b.clients[instance].refs == 0 {
-		b.armSharedIdleTimerLocked(instance)
+		b.startSharedIdleTimerLocked(instance)
 	}
 	b.signalClientChangedLocked()
 }
@@ -472,6 +479,8 @@ func (b *InproxyBrokerClientManager) closeClientBrokerClients() {
 	b.resetClientBrokerClientsLocked()
 }
 
+// inproxyBrokerFrontingSpecs returns all fronting specs in broker for the
+// given provider.
 func inproxyBrokerFrontingSpecs(broker *parameters.InproxyBrokerSpec, provider string) parameters.FrontingSpecs {
 	var specs parameters.FrontingSpecs
 	for _, spec := range broker.BrokerFrontingSpecs {
@@ -482,6 +491,8 @@ func inproxyBrokerFrontingSpecs(broker *parameters.InproxyBrokerSpec, provider s
 	return specs
 }
 
+// inproxyBrokerSupportsProvider reports whether the broker has at least one
+// fronting spec for the given provider.
 func inproxyBrokerSupportsProvider(broker *parameters.InproxyBrokerSpec, provider string) bool {
 	for _, spec := range broker.BrokerFrontingSpecs {
 		if spec.FrontingProviderID == provider {
@@ -687,6 +698,13 @@ func (s *inproxyBrokerSelector) reset() {
 	s.currentBrokerSelection = &inproxyBrokerSelectionState{}
 }
 
+// sharedLost refreshes the search after the shared client fails or idle
+// expires: provider order and replay allowances are rebuilt so the lost
+// client's provider may be replayed again, while broker cursors and the
+// session seed are kept. Personal pairing clients restart at the first
+// rendezvous broker with a new selection state; proxies keep their current
+// broker and selection state so surviving candidates there can still
+// become shared.
 func (s *inproxyBrokerSelector) sharedLost() {
 	s.providers, s.replayedByProvider = nil, nil
 	s.nextProvider, s.preferBrokerOrder = 0, false
@@ -710,6 +728,11 @@ func (s *inproxyBrokerSelector) advanceBroker(index int) {
 	s.nextProvider = 0
 }
 
+// noMatch applies client NoMatch failover for instance. Personal pairing
+// clients advance to the next rendezvous broker; common pairing clients
+// keep their cursors but make the next selection order-first, so replay
+// cannot jump ahead of the next route. Replay allowances already consumed
+// in this search are preserved.
 func (s *inproxyBrokerSelector) noMatch(instance *InproxyBrokerClientInstance) {
 	if s.exhaustBrokerProviders {
 		s.advanceBroker(instance.clientBrokerSelectCount + 1)
@@ -726,6 +749,17 @@ func (s *inproxyBrokerSelector) matchesCurrentBrokerSelection(instance *InproxyB
 	return !s.exhaustBrokerProviders || (s.currentBrokerSelection != nil && instance.brokerSelection == s.currentBrokerSelection)
 }
 
+// initialize builds the broker order and caches compartment IDs. It runs
+// at the start of every selectClient call and returns immediately while
+// s.brokers is populated, so the order is built once per configuration
+// snapshot rather than per candidate. s.brokers is cleared by reset and
+// by a tactics callback; the next selectClient call then rebuilds it from
+// current tactics.
+//
+// Common pairing order is a permutation seeded by s.seed, allocated once
+// per selector and retained across resets. Personal pairing order is
+// seeded by the personal compartment ID and bounded by
+// InproxyPersonalPairingMaxBrokerSpecCount.
 func (s *inproxyBrokerSelector) initialize(config *Config, p parameters.ParametersAccessor, isProxy bool) error {
 	if s.currentBrokerSelection == nil {
 		s.currentBrokerSelection = &inproxyBrokerSelectionState{}
@@ -767,6 +801,10 @@ func (s *inproxyBrokerSelector) initialize(config *Config, p parameters.Paramete
 	return nil
 }
 
+// initializeProviders builds s.providers, the cyclic order of distinct
+// fronting provider IDs across specs, in random order. A populated provider
+// list is left unchanged; sharedLost and advanceBroker clear it so the next
+// selection rebuilds it.
 func (s *inproxyBrokerSelector) initializeProviders(specs parameters.InproxyBrokerSpecsValue) {
 	if len(s.providers) > 0 {
 		return
