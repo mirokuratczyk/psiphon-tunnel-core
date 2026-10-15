@@ -64,11 +64,14 @@ fetcherLoop:
 				// the shared client fails or expires, a new broker client is
 				// created, which may use a different broker, fronting provider
 				// or dial parameters.
-				brokerClient, _, release, err := brokerClientManager.GetBrokerClient(ctx, networkID)
+				brokerClient, brokerDialParams, release, err := brokerClientManager.GetBrokerClient(ctx, networkID)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
 				defer release()
+				NoticeInfo(
+					"inproxy: broker client %s DSL request, shared %t, tunneled %t",
+					brokerDialParams.brokerClientID, brokerDialParams.isReuse, isTunneled)
 
 				response, err := brokerClient.ClientDSL(
 					ctx,

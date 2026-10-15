@@ -211,7 +211,13 @@ func (tunnel *Tunnel) Activate(
 
 	// The broker client is used only for the broker/server relay during the
 	// handshake below. Release the broker client when activation ends.
-	defer tunnel.dialParams.releaseInproxyBrokerClient()
+	defer func() {
+		reason := "activation complete"
+		if retErr != nil {
+			reason = "activation failed"
+		}
+		tunnel.dialParams.releaseInproxyBrokerClient(reason)
+	}()
 
 	// Ensure that, unless the base context is cancelled, any replayed dial
 	// parameters are cleared, no longer to be retried, if the tunnel fails to
@@ -1661,10 +1667,17 @@ func dialInproxy(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	diagnosticID := dialParams.ServerEntry.GetDiagnosticID()
+	NoticeInfo(
+		"inproxy: broker client %s tunnel dial %s acquired, shared %t",
+		brokerDialParams.brokerClientID, diagnosticID, brokerDialParams.isReuse)
 	// On success, release the broker client when activation ends or the
 	// returned connection closes. On failure, release it here.
 	defer func() {
 		if retConn == nil {
+			NoticeInfo(
+				"inproxy: broker client %s tunnel dial %s failed: %v",
+				brokerDialParams.brokerClientID, diagnosticID, retErr)
 			release()
 		}
 	}()
@@ -1691,34 +1704,62 @@ func dialInproxy(
 		return nil, errors.Trace(err)
 	}
 
+	NoticeInfo(
+		"inproxy: broker client %s tunnel dial %s connected",
+		brokerDialParams.brokerClientID, diagnosticID)
+
 	// Store the connection and broker client release function together for the
 	// broker/server relay, connection metrics and cleanup. Activation and
-	// connection Close may both call release; only the first call has an effect.
-	ownedConn := &inproxyBrokerOwnedConn{ClientConn: conn, release: release}
+	// connection Close may both call release; only the first call has an
+	// effect, and only the first call's reason is logged.
+	ownedConn := &inproxyBrokerOwnedConn{ClientConn: conn}
+	ownedConn.release = sync.OnceFunc(func() {
+		reason, _ := ownedConn.releaseReason.Load().(string)
+		NoticeInfo(
+			"inproxy: broker client %s tunnel dial %s released: %s",
+			brokerDialParams.brokerClientID, diagnosticID, reason)
+		release()
+	})
 	dialParams.inproxyConn.Store(ownedConn)
 
 	return ownedConn, nil
 }
 
+// getInproxyConn returns the in-proxy connection stored by dialInproxy, or
+// nil when there is none.
 func (dialParams *DialParameters) getInproxyConn() *inproxyBrokerOwnedConn {
 	conn, _ := dialParams.inproxyConn.Load().(*inproxyBrokerOwnedConn)
 	return conn
 }
 
-func (dialParams *DialParameters) releaseInproxyBrokerClient() {
+// releaseInproxyBrokerClient releases the broker client lease held by the
+// in-proxy connection, if any. reason is logged by the first release.
+func (dialParams *DialParameters) releaseInproxyBrokerClient(reason string) {
 	if conn := dialParams.getInproxyConn(); conn != nil {
-		conn.release()
+		conn.releaseWithReason(reason)
 	}
 }
 
+// inproxyBrokerOwnedConn pairs an in-proxy connection with the broker client
+// lease acquired for it, so the lease is released when the connection closes
+// or activation ends, whichever comes first.
 type inproxyBrokerOwnedConn struct {
 	*inproxy.ClientConn
-	release func()
+	release       func()
+	releaseReason atomic.Value // string
 }
 
+// releaseWithReason records reason for the release notice, then releases.
+// Only the first caller's reason is recorded.
+func (conn *inproxyBrokerOwnedConn) releaseWithReason(reason string) {
+	conn.releaseReason.CompareAndSwap(nil, reason)
+	conn.release()
+}
+
+// Close closes the connection and releases the broker client lease.
 func (conn *inproxyBrokerOwnedConn) Close() error {
 	err := conn.ClientConn.Close()
-	conn.release()
+	conn.releaseWithReason("connection closed")
 	return err
 }
 

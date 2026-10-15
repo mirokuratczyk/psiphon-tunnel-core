@@ -3365,7 +3365,7 @@ func TestInproxyDialConnectionOwnedRelay(t *testing.T) {
 				t.Fatal("cold broker/server exchange did not complete")
 			}
 			if earlyRelease {
-				dialParams.releaseInproxyBrokerClient()
+				dialParams.releaseInproxyBrokerClient("test")
 				if b.roundTripper.runCtx.Err() == nil {
 					t.Fatal("early release retained losing broker")
 				}
@@ -3381,7 +3381,7 @@ func TestInproxyDialConnectionOwnedRelay(t *testing.T) {
 			if err := conn.Close(); err != nil {
 				t.Fatal(err)
 			}
-			dialParams.releaseInproxyBrokerClient()
+			dialParams.releaseInproxyBrokerClient("test")
 			m.mutex.Lock()
 			cleaned := len(m.clients) == 1 && m.sharedClient == a
 			m.mutex.Unlock()
@@ -4798,7 +4798,7 @@ func TestInproxyBrokerPersonalConstructionFailure(t *testing.T) {
 		t.Fatal("local failure caused premature broker advancement")
 	}
 	m.mutex.Lock()
-	m.closeClientLocked(live)
+	m.closeClientLocked(live, "test")
 	m.mutex.Unlock()
 	_, _, _, _ = m.tryGetClientBrokerClient("TEST")
 	if m.selector.currentBrokerSelection.index != 1 {

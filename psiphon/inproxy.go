@@ -125,7 +125,7 @@ func (b *InproxyBrokerClientManager) TacticsApplied() error {
 		b.selector.brokers = nil
 		return nil
 	}
-	b.resetClientBrokerClientsLocked()
+	b.resetClientBrokerClientsLocked("tactics applied")
 	return nil
 }
 
@@ -135,7 +135,7 @@ func (b *InproxyBrokerClientManager) NetworkChanged() error {
 
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
-	b.resetClientBrokerClientsLocked()
+	b.resetClientBrokerClientsLocked("network changed")
 	return nil
 }
 
@@ -197,13 +197,14 @@ func (b *InproxyBrokerClientManager) GetBrokerClient(
 		dialParams := *instance.brokerDialParams
 		instance.mutex.Unlock()
 		dialParams.isReuse = reused
+		dialParams.brokerClientID = instance.brokerClientID
 		release := sync.OnceFunc(func() {
 			b.mutex.Lock()
 			defer b.mutex.Unlock()
 			if entry := b.clients[instance]; entry != nil {
 				entry.refs--
 				if entry.refs == 0 && b.sharedClient != instance {
-					b.closeClientLocked(instance)
+					b.closeClientLocked(instance, "last caller released")
 				} else if entry.refs == 0 {
 					b.startSharedIdleTimerLocked(instance)
 				}
@@ -236,7 +237,8 @@ func (b *InproxyBrokerClientManager) brokerClientFailed(instance *InproxyBrokerC
 	// still counts toward the client limit and toward the fronting providers
 	// tried at the current broker selection. Unsharing it or closing it
 	// closes b.changed, waking GetBrokerClient calls blocked on either.
-	if b.sharedClient == instance {
+	wasShared := b.sharedClient == instance
+	if wasShared {
 		b.stopSharedIdleTimerLocked()
 		b.sharedClient = nil
 		b.selector.sharedLost()
@@ -247,8 +249,12 @@ func (b *InproxyBrokerClientManager) brokerClientFailed(instance *InproxyBrokerC
 	// With no callers holding the broker client, no release will close it.
 	if entry.refs == 0 {
 		// Closes b.changed, waking GetBrokerClient calls blocked on it.
-		b.closeClientLocked(instance)
+		b.closeClientLocked(instance, "transport failure")
+		return
 	}
+	NoticeInfo(
+		"inproxy: broker client %s failed: transport failure, shared %t, callers %d",
+		instance.brokerClientID, wasShared, entry.refs)
 }
 
 // tryGetClientBrokerClient reuses the shared client or creates a new client.
@@ -263,7 +269,7 @@ func (b *InproxyBrokerClientManager) tryGetClientBrokerClient(
 	defer p.Close()
 
 	if b.networkID != networkID || b.selector.brokers == nil {
-		b.resetClientBrokerClientsLocked()
+		b.resetClientBrokerClientsLocked("network ID or broker specs changed")
 		b.networkID = networkID
 	}
 
@@ -383,23 +389,29 @@ func (b *InproxyBrokerClientManager) expireSharedClientLocked(instance *InproxyB
 	}
 	// Unlike a failure, idle expiry does not delete the stored replay dial
 	// parameters, and sharedLost allows the provider to be replayed again.
-	b.closeClientLocked(instance)
+	b.closeClientLocked(instance, "idle timeout")
 	b.selector.sharedLost()
 }
 
 // closeClientLocked removes and closes a client, even if it is still in use.
-// The caller must hold b.mutex.
-func (b *InproxyBrokerClientManager) closeClientLocked(instance *InproxyBrokerClientInstance) {
-	if _, ok := b.clients[instance]; !ok {
+// reason is included in the diagnostic notice. The caller must hold b.mutex.
+func (b *InproxyBrokerClientManager) closeClientLocked(
+	instance *InproxyBrokerClientInstance, reason string) {
+	entry, ok := b.clients[instance]
+	if !ok {
 		return
 	}
 	delete(b.clients, instance)
-	if b.sharedClient == instance {
+	wasShared := b.sharedClient == instance
+	if wasShared {
 		b.sharedClient = nil
 		b.stopSharedIdleTimerLocked()
 	}
 	_ = instance.Close()
 	b.signalClientChangedLocked()
+	NoticeInfo(
+		"inproxy: broker client %s closed: %s, shared %t, callers %d",
+		instance.brokerClientID, reason, wasShared, entry.refs)
 }
 
 // clientResponseReceived is called when instance receives a valid broker
@@ -418,13 +430,13 @@ func (b *InproxyBrokerClientManager) clientResponseReceived(
 		// A response from an earlier broker selection cannot change the shared
 		// client, even if the same broker has since been selected again.
 		if retryableNoMatch && !b.isProxy {
-			b.closeClientLocked(instance)
+			b.closeClientLocked(instance, "no match at stale broker selection")
 		}
 		return
 	}
 	if retryableNoMatch && !b.isProxy {
 		if b.sharedClient != nil && b.sharedClient != instance {
-			b.closeClientLocked(instance)
+			b.closeClientLocked(instance, "no match, another client is shared")
 			return
 		}
 		p := b.config.GetParameters().Get()
@@ -437,10 +449,16 @@ func (b *InproxyBrokerClientManager) clientResponseReceived(
 		if failover {
 			// Retain replay dial parameters and other clients. Close this client
 			// immediately, including any concurrent requests using it.
+			NoticeInfo(
+				"inproxy: broker client %s no match: failover",
+				instance.brokerClientID)
 			b.selector.noMatch(instance)
-			b.closeClientLocked(instance)
+			b.closeClientLocked(instance, "no match failover")
 			return
 		}
+		NoticeInfo(
+			"inproxy: broker client %s no match: retained",
+			instance.brokerClientID)
 	}
 	if b.sharedClient != nil {
 		// Keep the existing shared client. Both clients may still be in use.
@@ -451,14 +469,18 @@ func (b *InproxyBrokerClientManager) clientResponseReceived(
 		b.startSharedIdleTimerLocked(instance)
 	}
 	b.signalClientChangedLocked()
+	NoticeInfo("inproxy: broker client %s shared", instance.brokerClientID)
 }
 
 // resetClientBrokerClientsLocked closes all clients, clears network and broker
-// selection state, and wakes waiting GetBrokerClient calls.
-// The caller must hold b.mutex.
-func (b *InproxyBrokerClientManager) resetClientBrokerClientsLocked() {
-	for instance := range b.clients {
+// selection state, and wakes waiting GetBrokerClient calls. reason is
+// included in the per-client diagnostic notice. The caller must hold b.mutex.
+func (b *InproxyBrokerClientManager) resetClientBrokerClientsLocked(reason string) {
+	for instance, entry := range b.clients {
 		_ = instance.Close()
+		NoticeInfo(
+			"inproxy: broker client %s closed: %s, shared %t, callers %d",
+			instance.brokerClientID, reason, b.sharedClient == instance, entry.refs)
 	}
 	clear(b.clients)
 	b.sharedClient = nil
@@ -476,7 +498,7 @@ func (b *InproxyBrokerClientManager) closeClientBrokerClients() {
 	}
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
-	b.resetClientBrokerClientsLocked()
+	b.resetClientBrokerClientsLocked("shutdown")
 }
 
 // inproxyBrokerFrontingSpecs returns all fronting specs in broker for the
@@ -1014,6 +1036,10 @@ type InproxyBrokerClientInstance struct {
 	// Set at construction and read without
 	// InproxyBrokerClientInstance.mutex.
 	frontingProviderID string
+	// brokerClientID is a random, diagnostics-only identifier that
+	// correlates notices for one broker client. It is not sent to the
+	// broker or server.
+	brokerClientID string
 	// Broker selection index at construction; not changed by later selections.
 	clientBrokerSelectCount int
 	// Broker selection state when added to InproxyBrokerClientManager;
@@ -1112,6 +1138,10 @@ func NewInproxyBrokerClientInstance(
 		return nil, errors.Trace(err)
 	}
 
+	// The ID is set on brokerDialParams before the round tripper is created
+	// so that round trip failure notices can report it.
+	brokerDialParams.brokerClientID = prng.HexString(4)
+
 	roundTripper := NewInproxyBrokerRoundTripper(p, brokerDialParams)
 
 	// All broker clients for a proxy must announce the same proxy ID. Reuse
@@ -1150,6 +1180,7 @@ func NewInproxyBrokerClientInstance(
 	b := &InproxyBrokerClientInstance{
 		clientBrokerSelectCount:     selection.brokerSelectCount,
 		frontingProviderID:          brokerDialParams.FrontedHTTPDialParameters.FrontingProviderID,
+		brokerClientID:              brokerDialParams.brokerClientID,
 		config:                      config,
 		brokerClientManager:         brokerClientManager,
 		networkID:                   networkID,
@@ -1238,11 +1269,13 @@ func NewInproxyBrokerClientInstance(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	// Include the fronting provider and replay state, as concurrent broker
-	// clients may select the same broker via different providers.
+	// Include the client ID, fronting provider and replay state, as
+	// concurrent broker clients may select the same broker via different
+	// providers; the client ID also appears in close notices and in
+	// ConnectedServer as inproxy_broker_client_id.
 	NoticeInfo(
-		"inproxy: selected broker %s fronting provider %s replay %t",
-		inproxy.ID(brokerID), b.frontingProviderID, isReplay)
+		"inproxy: broker client %s selected broker %s fronting provider %s replay %t",
+		b.brokerClientID, inproxy.ID(brokerID), b.frontingProviderID, brokerDialParams.isReplay)
 
 	return b, nil
 }
@@ -1619,7 +1652,9 @@ func (b *InproxyBrokerClientInstance) BrokerClientRoundTripperFailed(roundTrippe
 		!b.lastSuccess.IsZero() &&
 		time.Since(b.lastSuccess) <= b.retryOnFailedPeriod {
 
-		NoticeWarning("BrokerClientRoundTripperFailed: retry roundTripper")
+		NoticeWarning(
+			"inproxy: broker client %s round trip failed, retrying",
+			b.brokerClientID)
 		return
 	}
 
@@ -1745,6 +1780,9 @@ type InproxyBrokerDialParameters struct {
 	brokerSpec *parameters.InproxyBrokerSpec `json:"-"`
 	isReplay   bool                          `json:"-"`
 	isReuse    bool                          `json:"-"`
+	// brokerClientID identifies the InproxyBrokerClientInstance that
+	// supplied this copy; see GetBrokerClient. Diagnostics only.
+	brokerClientID string `json:"-"`
 	// Stored bytes used to check for changes before deleting replay
 	// parameters. A broker client whose record was replaced by another
 	// broker client's success cannot delete that newer record.
@@ -2075,7 +2113,9 @@ func (rt *InproxyBrokerRoundTripper) RoundTrip(
 		// Log any error which results in invoking BrokerClientRoundTripperFailed.
 		var failedError *inproxy.RoundTripperFailedError
 		if std_errors.As(retErr, &failedError) {
-			NoticeWarning("RoundTripperFailedError: %v", retErr)
+			NoticeWarning(
+				"inproxy: broker client %s round trip failed: %v",
+				rt.brokerDialParams.brokerClientID, retErr)
 		}
 	}()
 

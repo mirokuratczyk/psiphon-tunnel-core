@@ -1524,6 +1524,11 @@ func (controller *Controller) SignalTunnelFailure(tunnel *Tunnel) {
 // discardTunnel disposes of a successful connection that is no longer required.
 func (controller *Controller) discardTunnel(tunnel *Tunnel) {
 	NoticeInfo("discard tunnel: %s", tunnel.dialParams.ServerEntry.GetDiagnosticID())
+	if params := tunnel.dialParams.inproxyBrokerDialParameters; params != nil {
+		NoticeInfo(
+			"inproxy: broker client %s tunnel dial %s discarded",
+			params.brokerClientID, tunnel.dialParams.ServerEntry.GetDiagnosticID())
+	}
 	// TODO: not calling PromoteServerEntry, since that would rank the
 	// discarded tunnel before fully active tunnels. Can a discarded tunnel
 	// be promoted (since it connects), but with lower rank than all active
