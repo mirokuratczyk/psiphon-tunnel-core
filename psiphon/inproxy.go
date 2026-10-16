@@ -1220,7 +1220,7 @@ func newInproxyBrokerClientInstance(
 
 	if !isReplay {
 		brokerDialParams, err = MakeInproxyBrokerDialParameters(
-			config, p, networkID, brokerSpec, selection.frontingSpecs, brokerClientManager.tlsCache)
+			config, p, brokerSpec, selection.frontingSpecs, brokerClientManager.tlsCache)
 	} else {
 		err = brokerDialParams.prepareDialConfigs(config, p, isReplay, brokerClientManager.tlsCache)
 	}
@@ -1998,7 +1998,6 @@ func deleteInproxyBrokerReplayParameters(networkID string, params *InproxyBroker
 func MakeInproxyBrokerDialParameters(
 	config *Config,
 	p parameters.ParametersAccessor,
-	networkID string, // currently unused; retained for possible future use.
 	brokerSpec *parameters.InproxyBrokerSpec,
 	frontingSpecs parameters.FrontingSpecs,
 	tlsCache utls.ClientSessionCache) (*InproxyBrokerDialParameters, error) {

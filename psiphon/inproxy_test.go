@@ -1293,7 +1293,7 @@ func TestInproxyBrokerProviderReplay(t *testing.T) {
 	spec := newProviderTestBroker(t, "A", "B", "C")
 	m := newProviderTestManager(t, 1, spec)
 	p := m.config.GetParameters().Get()
-	replay, err := MakeInproxyBrokerDialParameters(m.config, p, "TEST", spec, spec.BrokerFrontingSpecs[:1], m.tlsCache)
+	replay, err := MakeInproxyBrokerDialParameters(m.config, p, spec, spec.BrokerFrontingSpecs[:1], m.tlsCache)
 	p.Close()
 	if err != nil {
 		t.Fatal(err)
@@ -1535,7 +1535,7 @@ func makeBrokerReplayTestParameters(t *testing.T, m *InproxyBrokerClientManager,
 	t.Helper()
 	p := m.config.GetParameters().Get()
 	defer p.Close()
-	params, err := MakeInproxyBrokerDialParameters(m.config, p, "TEST", spec,
+	params, err := MakeInproxyBrokerDialParameters(m.config, p, spec,
 		inproxyBrokerFrontingSpecs(spec, providerID), m.tlsCache)
 	if err != nil {
 		t.Fatal(err)

@@ -117,7 +117,7 @@ func BenchmarkInproxyBrokerReplayLookup(b *testing.B) {
 					}
 					if wantReplay {
 						params, err := MakeInproxyBrokerDialParameters(m.config, p,
-							"TEST", specs[selected], specs[selected].BrokerFrontingSpecs[:1], m.tlsCache)
+							specs[selected], specs[selected].BrokerFrontingSpecs[:1], m.tlsCache)
 						if err != nil {
 							b.Fatal(err)
 						}
