@@ -517,7 +517,7 @@ func runInproxyNATStateTest() error {
 // and one fronting provider, publishing gateTestBaseParameters. The manager
 // is not registered as a TacticsAppliedReceiver: tests call TacticsApplied
 // directly or register it themselves.
-func newGateTestManager(t *testing.T) *InproxyBrokerClientManager {
+func newGateTestManager(t testing.TB) *InproxyBrokerClientManager {
 	t.Helper()
 	key, err := inproxy.GenerateSessionPrivateKey()
 	if err != nil {
@@ -912,7 +912,7 @@ func TestInproxyBrokerNoMatchFailover(t *testing.T) {
 				if next == old {
 					t.Fatal("probability one did not replace shared client")
 				}
-				if personal && (next.brokerPublicKey == old.brokerPublicKey || next.clientBrokerSelectCount != old.clientBrokerSelectCount+1) {
+				if personal && (next.brokerPublicKey == old.brokerPublicKey || next.brokerSelection.index != old.brokerSelection.index+1) {
 					t.Fatal("personal NoMatch did not advance rendezvous broker")
 				}
 				next.brokerResponseSucceededForTest(next.roundTripper)
@@ -1093,7 +1093,7 @@ func TestInproxyBrokerClientGatePersonalAndProxy(t *testing.T) {
 // newProviderTestBroker returns a broker spec with fresh keys and one
 // fronting spec per entry in providerIDs, in order. Duplicate IDs produce
 // duplicate fronting specs for the same provider.
-func newProviderTestBroker(t *testing.T, providerIDs ...string) *parameters.InproxyBrokerSpec {
+func newProviderTestBroker(t testing.TB, providerIDs ...string) *parameters.InproxyBrokerSpec {
 	t.Helper()
 	key, err := inproxy.GenerateSessionPrivateKey()
 	if err != nil {
@@ -1122,7 +1122,7 @@ func newProviderTestBroker(t *testing.T, providerIDs ...string) *parameters.Inpr
 // specs are replaced by specs, with the client limit set to limit, replay
 // and failed-replay retention forced on, and personal pairing bounded to
 // two brokers.
-func newProviderTestManager(t *testing.T, limit int, specs ...*parameters.InproxyBrokerSpec) *InproxyBrokerClientManager {
+func newProviderTestManager(t testing.TB, limit int, specs ...*parameters.InproxyBrokerSpec) *InproxyBrokerClientManager {
 	t.Helper()
 	m := newGateTestManager(t)
 	if err := setGateTestParameters(m.config, "", map[string]interface{}{
@@ -1835,10 +1835,10 @@ func TestInproxyBrokerReplayBrokerSelection(t *testing.T) {
 			t.Fatal(err)
 		}
 		if firstOnly {
-			if selection.brokerSpec != first || selection.brokerDialParams != nil {
+			if selection.brokerSpec != first || selection.replayDialParams != nil {
 				t.Fatal("replay changed rendezvous broker order")
 			}
-		} else if selection.brokerSpec != second || selection.brokerDialParams == nil || selection.brokerDialParams.FrontedHTTPDialParameters.FrontingProviderID != "B" {
+		} else if selection.brokerSpec != second || selection.replayDialParams == nil || selection.replayDialParams.FrontedHTTPDialParameters.FrontingProviderID != "B" {
 			t.Fatal("did not prefer broker with valid replay")
 		}
 	}
@@ -3450,7 +3450,7 @@ func TestInproxyProxyProviderRace(t *testing.T) {
 			}
 			var release func()
 			next := getGateTestClient(t, m, &release)
-			if next.clientBrokerSelectCount != 1 || next.BrokerPublicKey() == clients[0].BrokerPublicKey() || next.BrokerClientPrivateKey() != clients[0].BrokerClientPrivateKey() {
+			if next.brokerSelection.index != 1 || next.BrokerPublicKey() == clients[0].BrokerPublicKey() || next.BrokerClientPrivateKey() != clients[0].BrokerClientPrivateKey() {
 				t.Fatal("exhaustion did not advance stable broker order/identity")
 			}
 			next.brokerResponseSucceededForTest(next.roundTripper)
@@ -3908,7 +3908,7 @@ func TestInproxyBrokerNoMatchBeforePublication(t *testing.T) {
 				if (m.sharedClient == c) == failover {
 					t.Fatal("NoMatch publication ignored probability")
 				}
-				if failover && personal && m.selector.currentBrokerSelection.index != c.clientBrokerSelectCount+1 {
+				if failover && personal && m.selector.currentBrokerSelection.index != c.brokerSelection.index+1 {
 					t.Fatal("personal failover did not skip to next broker")
 				}
 				stored := loadBrokerReplayTestParameters(t, c.brokerDialParams.brokerSpec)
@@ -4243,7 +4243,12 @@ func TestInproxyBrokerSparseProviderCoverage(t *testing.T) {
 			t.Fatal("fresh selection did not rotate providers breadth-first")
 		}
 		if provider == "B" {
-			bIndexes = append(bIndexes, selection.brokerSelectCount)
+			for index, spec := range specs {
+				if selection.brokerSpec == spec {
+					bIndexes = append(bIndexes, index)
+					break
+				}
+			}
 		}
 	}
 	if !reflect.DeepEqual(bIndexes, []int{1, 2, 0, 1, 2, 0}) {
@@ -4498,7 +4503,7 @@ func TestInproxyBrokerPersonalReplayPreservesProviderExhaustion(t *testing.T) {
 		t.Fatal(err)
 	}
 	second, err := s.selectClient(m.config, p, "TEST", false, nil)
-	if err != nil || second.brokerDialParams == nil || second.frontingSpecs[0].FrontingProviderID != "C" {
+	if err != nil || second.replayDialParams == nil || second.frontingSpecs[0].FrontingProviderID != "C" {
 		t.Fatalf("expected C replay: %v", err)
 	}
 	if s.currentBrokerSelection.index != 0 {
@@ -4553,7 +4558,7 @@ func TestInproxyBrokerPersonalRaceGate(t *testing.T) {
 				if broker == "" {
 					broker = c.brokerDialParams.brokerSpec.BrokerPublicKey
 				}
-				if seen[c.frontingProviderID] || c.clientBrokerSelectCount != 0 || c.brokerDialParams.brokerSpec.BrokerPublicKey != broker {
+				if seen[c.frontingProviderID] || c.brokerSelection.index != 0 || c.brokerDialParams.brokerSpec.BrokerPublicKey != broker {
 					t.Fatal("race repeated a provider or advanced before exhausting the current broker")
 				}
 				seen[c.frontingProviderID] = true
@@ -4601,7 +4606,7 @@ func TestInproxyBrokerPersonalRaceGate(t *testing.T) {
 				}
 			}
 			next := getGateTestClient(t, m)
-			if next.clientBrokerSelectCount != 1 || next.brokerDialParams.brokerSpec.BrokerPublicKey == broker {
+			if next.brokerSelection.index != 1 || next.brokerDialParams.brokerSpec.BrokerPublicKey == broker {
 				t.Fatal("exhausted visit did not advance to next rendezvous broker")
 			}
 		})
@@ -4641,7 +4646,7 @@ func TestInproxyBrokerPersonalRaceNoMatch(t *testing.T) {
 				}
 				b.BrokerClientResponseReceived(b.roundTripper, false)
 				c := getGateTestClient(t, m)
-				if c.clientBrokerSelectCount != a.clientBrokerSelectCount+1 || c.brokerDialParams.brokerSpec.BrokerPublicKey == a.brokerDialParams.brokerSpec.BrokerPublicKey {
+				if c.brokerSelection.index != a.brokerSelection.index+1 || c.brokerDialParams.brokerSpec.BrokerPublicKey == a.brokerDialParams.brokerSpec.BrokerPublicKey {
 					t.Fatal("new selection did not advance immediately")
 				}
 				if got, _, changed, err := m.tryGetClientBrokerClient("TEST"); err != nil || got != nil || changed == nil {
@@ -4719,7 +4724,7 @@ func TestInproxyBrokerPersonalProviderGateWake(t *testing.T) {
 					if result.client != b || a.roundTripper.runCtx.Err() != nil {
 						t.Fatal("promotion did not share winner and preserve competitor")
 					}
-				} else if result.client.clientBrokerSelectCount != 1 || result.client.brokerSelection == a.brokerSelection {
+				} else if result.client.brokerSelection.index != 1 || result.client.brokerSelection == a.brokerSelection {
 					t.Fatal("exhaustion did not wake worker at the next broker visit")
 				}
 			case <-parent.Done():
@@ -4757,7 +4762,7 @@ func TestInproxyBrokerPersonalVisitIdentity(t *testing.T) {
 			if c.brokerSelection == b.brokerSelection || c.brokerDialParams.brokerSpec.BrokerPublicKey != b.brokerDialParams.brokerSpec.BrokerPublicKey {
 				t.Fatal("same-broker selection did not get a new visit")
 			}
-			if event != "wrap" && c.clientBrokerSelectCount != 0 {
+			if event != "wrap" && c.brokerSelection.index != 0 {
 				t.Fatal("shared loss did not restart at primary broker")
 			}
 			b.BrokerClientResponseReceived(b.roundTripper, false)
@@ -4771,6 +4776,113 @@ func TestInproxyBrokerPersonalVisitIdentity(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestInproxyBrokerStaleVisitNoMatch verifies the stale-visit branch of
+// clientResponseReceived: a retryable NoMatch from a client whose broker
+// selection is no longer current closes only that client for personal
+// pairing clients, cannot advance the current selection, and is a no-op for
+// proxies, which never apply NoMatch failover.
+func TestInproxyBrokerStaleVisitNoMatch(t *testing.T) {
+	for _, proxy := range []bool{false, true} {
+		name := "client"
+		if proxy {
+			name = "proxy"
+		}
+		t.Run(name, func(t *testing.T) {
+			specs := []*parameters.InproxyBrokerSpec{newProviderTestBroker(t, "A"), newProviderTestBroker(t, "A")}
+			var m *InproxyBrokerClientManager
+			if proxy {
+				m = newProxyRaceTestManager(t, 2, specs...)
+			} else {
+				m = newPersonalRaceTestManager(t, 2, 1.0, specs...)
+			}
+			var releaseA func()
+			a := getGateTestClient(t, m, &releaseA)
+			// Advance the selection as exhaustion would, leaving a
+			// tracked at the previous visit.
+			m.mutex.Lock()
+			m.selector.advanceBroker(a.brokerSelection.index + 1)
+			current := m.selector.currentBrokerSelection
+			m.mutex.Unlock()
+			a.BrokerClientResponseReceived(a.roundTripper, true)
+			m.mutex.Lock()
+			_, tracked := m.clients[a]
+			shared := m.sharedClient
+			unchanged := m.selector.currentBrokerSelection == current
+			m.mutex.Unlock()
+			if shared != nil || !unchanged {
+				t.Fatal("stale NoMatch promoted or advanced the current selection")
+			}
+			if closed := a.roundTripper.runCtx.Err() != nil; proxy {
+				if !tracked || closed {
+					t.Fatal("proxy stale NoMatch was not a no-op")
+				}
+			} else if tracked || !closed {
+				t.Fatal("client stale NoMatch did not close only that client")
+			}
+			// The current visit is unaffected: a new client selects
+			// there.
+			b := getGateTestClient(t, m)
+			if b.brokerSelection != current || b.BrokerPublicKey() == a.BrokerPublicKey() {
+				t.Fatal("stale NoMatch disturbed selection at the current broker")
+			}
+			releaseA()
+		})
+	}
+}
+
+// TestInproxyProxySharedLossReplayExclusion verifies that after a proxy loses
+// its shared client, the retained visit's tried providers are rebuilt from
+// the surviving clients, and that a provider tried at that visit but no
+// longer occupied by a live client is excluded from replay: occupancy alone
+// cannot exclude it, so the tried check in canReplay must.
+func TestInproxyProxySharedLossReplayExclusion(t *testing.T) {
+	spec := newProviderTestBroker(t, "A", "B", "C", "D")
+	m := newProxyRaceTestManager(t, 3, spec)
+	var releaseA, releaseB, releaseC func()
+	a := getGateTestClient(t, m, &releaseA)
+	b := getGateTestClient(t, m, &releaseB)
+	// Share via the decoded response only: a transport success would set
+	// lastSuccess and put the common proxy in its failure retry window.
+	a.BrokerClientResponseReceived(a.roundTripper, false)
+	a.BrokerClientRoundTripperFailed(a.roundTripper)
+	m.mutex.Lock()
+	visit := m.selector.currentBrokerSelection
+	retained := visit == a.brokerSelection && visit.tried == nil
+	m.mutex.Unlock()
+	if !retained {
+		t.Fatal("proxy shared loss did not retain the visit and clear tried providers")
+	}
+	// Recovery rebuilds tried from a and b and selects an untried provider
+	// fresh.
+	c := getGateTestClient(t, m, &releaseC)
+	if c.brokerSelection != visit || c.frontingProviderID == a.frontingProviderID ||
+		c.frontingProviderID == b.frontingProviderID || c.brokerDialParams.isReplay {
+		t.Fatalf("recovery selected %s replay=%v; want an untried provider fresh",
+			c.frontingProviderID, c.brokerDialParams.isReplay)
+	}
+	m.mutex.Lock()
+	remarked := visit.tried[a.frontingProviderID] && visit.tried[b.frontingProviderID] && visit.tried[c.frontingProviderID]
+	m.mutex.Unlock()
+	if !remarked {
+		t.Fatal("tried providers were not rebuilt from tracked clients")
+	}
+	// Close c: its provider stays tried at this visit but is no longer
+	// occupied, so only the tried check can exclude it. With a valid replay
+	// record for it, the replay-first scan must skip it and select the one
+	// remaining untried provider fresh.
+	releaseC()
+	if err := storeInproxyBrokerReplayParameters("TEST", makeBrokerReplayTestParameters(t, m, spec, c.frontingProviderID)); err != nil {
+		t.Fatal(err)
+	}
+	d := getGateTestClient(t, m)
+	if d.brokerSelection != visit || d.frontingProviderID == c.frontingProviderID || d.brokerDialParams.isReplay {
+		t.Fatalf("tried but unoccupied provider %s was replayed: selected %s replay=%v",
+			c.frontingProviderID, d.frontingProviderID, d.brokerDialParams.isReplay)
+	}
+	releaseA()
+	releaseB()
 }
 
 // TestInproxyBrokerPersonalConstructionFailure verifies that a local
@@ -4834,7 +4946,7 @@ func TestInproxyBrokerPersonalNoMatchPromotionRace(t *testing.T) {
 		close(start)
 		wg.Wait()
 		if m.sharedClient != nil || (b.roundTripper.runCtx.Err() != nil) != otherNoMatch ||
-			m.selector.currentBrokerSelection == a.brokerSelection || m.selector.currentBrokerSelection.index != a.clientBrokerSelectCount+1 {
+			m.selector.currentBrokerSelection == a.brokerSelection || m.selector.currentBrokerSelection.index != a.brokerSelection.index+1 {
 			t.Fatal("competing success reversed NoMatch failover or killed its worker")
 		}
 		m.closeClientBrokerClients()
@@ -4902,7 +5014,7 @@ func TestInproxyBrokerNoMatchPreservesReplayBudget(t *testing.T) {
 			if next.brokerPublicKey == c.brokerPublicKey {
 				t.Fatal("NoMatch failover did not move to the next broker")
 			}
-			if personal && next.clientBrokerSelectCount != c.clientBrokerSelectCount+1 {
+			if personal && next.brokerSelection.index != c.brokerSelection.index+1 {
 				t.Fatal("NoMatch did not advance personal rendezvous broker")
 			}
 		})

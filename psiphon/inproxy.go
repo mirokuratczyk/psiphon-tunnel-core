@@ -197,7 +197,6 @@ func (b *InproxyBrokerClientManager) GetBrokerClient(
 		dialParams := *instance.brokerDialParams
 		instance.mutex.Unlock()
 		dialParams.isReuse = reused
-		dialParams.brokerClientID = instance.brokerClientID
 		release := sync.OnceFunc(func() {
 			b.mutex.Lock()
 			defer b.mutex.Unlock()
@@ -235,8 +234,9 @@ func (b *InproxyBrokerClientManager) brokerClientFailed(instance *InproxyBrokerC
 	entry.failed = true
 	// A failed client held by callers stays tracked until released, so it
 	// still counts toward the client limit and toward the fronting providers
-	// tried at the current broker selection. Unsharing it or closing it
-	// closes b.changed, waking GetBrokerClient calls blocked on either.
+	// tried at the current broker selection, unless shared loss allocated a
+	// new selection. Unsharing it or closing it closes b.changed, waking
+	// GetBrokerClient calls blocked on either.
 	wasShared := b.sharedClient == instance
 	if wasShared {
 		b.stopSharedIdleTimerLocked()
@@ -971,7 +971,7 @@ func (s *inproxyBrokerSelector) selectClient(config *Config, p parameters.Parame
 		brokerSelection:        s.currentBrokerSelection,
 		brokerSpec:             spec,
 		frontingSpecs:          inproxyBrokerFrontingSpecs(spec, provider),
-		brokerDialParams:       replay,
+		replayDialParams:       replay,
 		replayEnabled:          replayEnabled,
 		commonCompartmentIDs:   s.commonCompartmentIDs,
 		personalCompartmentIDs: s.personalCompartmentIDs,
@@ -1173,18 +1173,33 @@ type InproxyBrokerClientInstance struct {
 }
 
 // inproxyBrokerClientSelection contains the broker and dial parameters for a
-// new client. brokerSpec retains all providers for replay hash validation;
-// frontingSpecs contains only the selected provider's specs.
+// broker client.
 type inproxyBrokerClientSelection struct {
-	brokerSelection        *inproxyBrokerSelectionState
-	brokerSpec             *parameters.InproxyBrokerSpec
-	frontingSpecs          parameters.FrontingSpecs
-	brokerDialParams       *InproxyBrokerDialParameters
-	replayEnabled          bool
+	brokerSelection *inproxyBrokerSelectionState
+
+	// brokerSpec retains all providers for replay hash validation.
+	brokerSpec *parameters.InproxyBrokerSpec
+	// frontingSpecs contains only the selected provider's specs.
+	frontingSpecs parameters.FrontingSpecs
+
+	// replayDialParams is the validated replay record selected for this
+	// broker and provider, or nil when fresh dial parameters are generated.
+	replayDialParams *InproxyBrokerDialParameters
+
+	// replayEnabled reports whether replay is in effect for the broker
+	// client's lifetime, so its first success stores dial parameters for
+	// later replay and a failure may delete them. It is true even when
+	// replayDialParams is nil and the dial is fresh.
+	replayEnabled bool
+
 	commonCompartmentIDs   []inproxy.ID
 	personalCompartmentIDs []inproxy.ID
 }
 
+// newInproxyBrokerClientInstance creates a client for the selected broker and
+// fronting provider. It generates fresh dial parameters or prepares the
+// selected replay parameters in place for use by the new instance. No network
+// operations occur until the client's first request.
 func newInproxyBrokerClientInstance(
 	config *Config,
 	p parameters.ParametersAccessor,
@@ -1194,7 +1209,7 @@ func newInproxyBrokerClientInstance(
 	selection *inproxyBrokerClientSelection) (*InproxyBrokerClientInstance, error) {
 
 	brokerSpec := selection.brokerSpec
-	brokerDialParams := selection.brokerDialParams
+	brokerDialParams := selection.replayDialParams
 	var err error
 
 	// Generate new broker dial parameters if not replaying. isReplay also
