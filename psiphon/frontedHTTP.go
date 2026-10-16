@@ -53,7 +53,7 @@ func newFrontedHTTPClientInstance(
 	}
 
 	// Replay selection and dial parameter preparation here overlap with
-	// inproxyBrokerSelector and prepareInproxyBrokerDialParameters.
+	// inproxyBrokerSelector and MakeInproxyBrokerDialParameters.
 	//
 	// TODO: merge common functionality?
 
