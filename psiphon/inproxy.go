@@ -1879,9 +1879,14 @@ type InproxyBrokerDialParameters struct {
 }
 
 // loadInproxyBrokerReplayParameters loads valid replay dial parameters or
-// deletes an invalid record. Both operations use one transaction so validation
-// cannot delete a record stored concurrently by another client. The hash is
-// checked against the full broker spec, including all fronting providers.
+// deletes an invalid record. The hash is checked against the full broker
+// spec, including all fronting providers.
+//
+// Absent and valid records are read in a read-only transaction, which avoids
+// a writable commit for the common cases. Only an invalid record enters a
+// writable transaction, which re-reads and revalidates the current bytes so
+// that a valid record stored concurrently by another broker client between
+// the two transactions is returned rather than deleted.
 func loadInproxyBrokerReplayParameters(
 	networkID string, brokerSpec *parameters.InproxyBrokerSpec,
 	ttl time.Duration) (*InproxyBrokerDialParameters, error) {
@@ -1891,26 +1896,51 @@ func loadInproxyBrokerReplayParameters(
 		return nil, errors.Trace(err)
 	}
 	key := makeNetworkReplayParametersKey[InproxyBrokerDialParameters](networkID, brokerSpec.BrokerPublicKey)
-	var params *InproxyBrokerDialParameters
-	err = datastoreUpdate(func(tx *datastoreTx) error {
-		bucket := tx.bucket(datastoreNetworkReplayParametersBucket)
-		value := bucket.get(key)
+
+	// decode returns the record when value holds valid replay parameters for
+	// brokerSpec, or nil when value is absent or invalid. The returned record
+	// copies value, as bucket values live only for their transaction.
+	decode := func(value []byte) *InproxyBrokerDialParameters {
 		if value == nil {
 			return nil
 		}
+		var params *InproxyBrokerDialParameters
 		if err := json.Unmarshal(value, &params); err != nil || params == nil ||
 			params.FrontedHTTPDialParameters == nil ||
 			!params.LastUsedTimestamp.After(time.Now().Add(-ttl)) ||
 			!bytes.Equal(params.LastUsedBrokerSpecHash, hash) ||
 			!inproxyBrokerSupportsProvider(brokerSpec, params.FrontedHTTPDialParameters.FrontingProviderID) {
-			params = nil
-			return errors.Trace(bucket.delete(key))
+			return nil
 		}
 		// Preserve the original bytes: re-marshalling could drop unknown
 		// fields and no longer match the stored record during deletion.
-		// Copy them because bucket values may only live for the transaction.
 		params.replayRecord = append([]byte(nil), value...)
 		params.brokerSpec = brokerSpec
+		return params
+	}
+
+	var params *InproxyBrokerDialParameters
+	invalid := false
+	err = datastoreView(func(tx *datastoreTx) error {
+		value := tx.bucket(datastoreNetworkReplayParametersBucket).get(key)
+		params = decode(value)
+		invalid = value != nil && params == nil
+		return nil
+	})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if !invalid {
+		return params, nil
+	}
+
+	err = datastoreUpdate(func(tx *datastoreTx) error {
+		bucket := tx.bucket(datastoreNetworkReplayParametersBucket)
+		value := bucket.get(key)
+		params = decode(value)
+		if value != nil && params == nil {
+			return errors.Trace(bucket.delete(key))
+		}
 		return nil
 	})
 	if err != nil {
