@@ -310,7 +310,7 @@ func (b *InproxyBrokerClientManager) tryGetClientBrokerClient(
 		}
 		return nil, false, b.changed, nil
 	}
-	instance, err = NewInproxyBrokerClientInstance(b.config, p, b, networkID, b.isProxy, selection)
+	instance, err = newInproxyBrokerClientInstance(b.config, p, b, networkID, b.isProxy, selection)
 	if err != nil {
 		return nil, false, nil, errors.Trace(err)
 	}
@@ -318,8 +318,24 @@ func (b *InproxyBrokerClientManager) tryGetClientBrokerClient(
 		b.clients = make(map[*InproxyBrokerClientInstance]*inproxyBrokerClientEntry)
 	}
 	b.clients[instance] = &inproxyBrokerClientEntry{refs: 1}
-	instance.brokerSelection = b.selector.currentBrokerSelection
 	return instance, false, nil, nil
+}
+
+// brokerClientPrivateKey returns the configured proxy key, or generates an
+// ephemeral proxy key on first use and retains it for future calls.
+// Clients get a new ephemeral key on each call.
+func (b *InproxyBrokerClientManager) brokerClientPrivateKey() (inproxy.SessionPrivateKey, error) {
+	if !b.isProxy {
+		return inproxy.GenerateSessionPrivateKey()
+	}
+	b.proxyKeyOnce.Do(func() {
+		if b.config.InproxyProxySessionPrivateKey != "" {
+			b.proxyKey, b.proxyKeyErr = inproxy.SessionPrivateKeyFromString(b.config.InproxyProxySessionPrivateKey)
+		} else {
+			b.proxyKey, b.proxyKeyErr = inproxy.GenerateSessionPrivateKey()
+		}
+	})
+	return b.proxyKey, b.proxyKeyErr
 }
 
 // signalClientChangedLocked wakes waiting GetBrokerClient calls. The caller
@@ -452,7 +468,7 @@ func (b *InproxyBrokerClientManager) clientResponseReceived(
 			NoticeInfo(
 				"inproxy: broker client %s no match: failover",
 				instance.brokerClientID)
-			b.selector.noMatch(instance)
+			b.selector.noMatch()
 			b.closeClientLocked(instance, "no match failover")
 			return
 		}
@@ -618,6 +634,8 @@ func inproxyBrokerSupportsProvider(broker *parameters.InproxyBrokerSpec, provide
 //     proxies. Losing the shared client retains the current broker selection state.
 //   - On NoMatch the proxy keeps announcing at the same broker instead of
 //     rotating, so a client has an opportunity to find it.
+//
+// inproxyBrokerSelector is not safe for concurrent use.
 type inproxyBrokerSelector struct {
 	// Prepared during initialization and retained until reset. All broker
 	// clients created by this selector use the same compartment ID lists.
@@ -750,14 +768,15 @@ func (s *inproxyBrokerSelector) advanceBroker(index int) {
 	s.nextProvider = 0
 }
 
-// noMatch applies client NoMatch failover for instance. Personal pairing
+// noMatch applies client NoMatch failover at the current selection. Personal
 // clients advance to the next rendezvous broker; common pairing clients
 // keep their cursors but make the next selection order-first, so replay
 // cannot jump ahead of the next route. Replay allowances already consumed
-// in this search are preserved.
-func (s *inproxyBrokerSelector) noMatch(instance *InproxyBrokerClientInstance) {
+// in this search are preserved. The caller must verify that the responding
+// client belongs to the current selection.
+func (s *inproxyBrokerSelector) noMatch() {
 	if s.exhaustBrokerProviders {
-		s.advanceBroker(instance.clientBrokerSelectCount + 1)
+		s.advanceBroker(s.currentBrokerSelection.index + 1)
 	}
 	s.preferBrokerOrder = true
 }
@@ -851,12 +870,12 @@ func (s *inproxyBrokerSelector) initializeProviders(specs parameters.InproxyBrok
 // inproxyBrokerSelector. It returns the selection without creating the
 // client or performing network operations.
 //
-// InproxyBrokerClientManager must hold its mutex and pass every broker client
-// it still tracks, including failed clients and clients from earlier broker
-// selections that callers still hold. All supplied clients count toward
-// provider usage; for personal pairing clients and proxies, only clients
-// holding the current broker selection state count toward providers tried
-// at that broker and the decision to wait before advancing.
+// InproxyBrokerClientManager passes every broker client it still tracks,
+// including failed clients and clients from earlier broker selections that
+// callers still hold. All supplied clients count toward provider usage; for
+// personal pairing clients and proxies, only clients holding the current
+// broker selection state count toward providers tried at that broker and the
+// decision to wait before advancing.
 //
 // selectClient returns nil, nil when every provider at the current broker has
 // been tried and clients from that selection are still tracked; the caller
@@ -868,34 +887,43 @@ func (s *inproxyBrokerSelector) selectClient(config *Config, p parameters.Parame
 	if err := s.initialize(config, p, proxy); err != nil {
 		return nil, errors.Trace(err)
 	}
-	// Restore the current broker's provider list before checking whether all
-	// providers have been tried. In proxy mode, shared client loss clears this
-	// list while retaining the selected broker.
-	if s.exhaustBrokerProviders && s.currentBrokerSelection.spec != nil {
-		s.initializeProviders(parameters.InproxyBrokerSpecsValue{s.currentBrokerSelection.spec})
+	if s.exhaustBrokerProviders {
+		visit := s.currentBrokerSelection
+
+		// Shared client loss clears the provider order and tried
+		// providers but retains the selection for proxies, so both are
+		// rebuilt from the clients that remain tracked. Clients from
+		// earlier selections occupy capacity but cannot delay this one.
+		if visit.spec != nil {
+			s.initializeProviders(parameters.InproxyBrokerSpecsValue{visit.spec})
+		}
+		currentLive := 0
+		for _, c := range live {
+			if c.brokerSelection != visit {
+				continue
+			}
+			currentLive++
+			if visit.tried == nil {
+				visit.tried = make(map[string]bool)
+			}
+			visit.tried[c.frontingProviderID] = true
+		}
+
+		// Once every provider at the current broker has been tried,
+		// wait while clients from that selection remain tracked, since
+		// one may still become shared; advance only after none remain.
+		// A broker not yet selected has no providers and is not
+		// exhausted.
+		if len(s.providers) > 0 && len(visit.tried) == len(s.providers) {
+			if currentLive > 0 {
+				return nil, nil
+			}
+			s.advanceBroker(visit.index + 1)
+		}
 	}
 	counts := make(map[string]int)
-	currentLive := 0
 	for _, c := range live {
 		counts[c.frontingProviderID]++
-		// Older selections still count toward provider usage, but do not
-		// prevent advancing past the current broker or marking its providers
-		// as tried.
-		if s.matchesCurrentBrokerSelection(c) {
-			currentLive++
-			if s.exhaustBrokerProviders {
-				if s.currentBrokerSelection.tried == nil {
-					s.currentBrokerSelection.tried = make(map[string]bool)
-				}
-				s.currentBrokerSelection.tried[c.frontingProviderID] = true
-			}
-		}
-	}
-	if s.exhaustBrokerProviders && len(s.providers) > 0 && len(s.currentBrokerSelection.tried) == len(s.providers) {
-		if currentLive > 0 {
-			return nil, nil
-		}
-		s.advanceBroker(s.currentBrokerSelection.index + 1)
 	}
 	ttl := p.Duration(parameters.InproxyReplayBrokerDialParametersTTL)
 	replayEnabled := ttl > 0 && !config.DisableReplay && p.WeightedCoinFlip(parameters.InproxyReplayBrokerDialParametersProbability)
@@ -914,33 +942,60 @@ func (s *inproxyBrokerSelector) selectClient(config *Config, p parameters.Parame
 	canReplay := func(provider string) bool {
 		return replayEnabled && counts[provider] == 0 && !s.replayedByProvider[provider] && (!s.exhaustBrokerProviders || !s.currentBrokerSelection.tried[provider])
 	}
-	specs := s.brokers
+	var spec *parameters.InproxyBrokerSpec
+	var provider string
+	var replay *InproxyBrokerDialParameters
+	var err error
 	if s.exhaustBrokerProviders {
-		if s.currentBrokerSelection.spec == nil {
-			// Common pairing proxies may select a broker with replay dial
-			// parameters first. Changing brokers does not clear the record of
-			// providers already replayed during this search.
-			if !s.personal && replayEnabled && !s.preferBrokerOrder {
-				for i := range s.brokers {
-					index := (s.currentBrokerSelection.index + i) % len(s.brokers)
-					if params := load(s.brokers[index]); params != nil && canReplay(params.FrontedHTTPDialParameters.FrontingProviderID) {
-						s.currentBrokerSelection.index += i
-						break
-					}
-				}
-			}
-			s.currentBrokerSelection.spec = s.brokers[s.currentBrokerSelection.index%len(s.brokers)]
-		}
-		specs = parameters.InproxyBrokerSpecsValue{s.currentBrokerSelection.spec}
+		spec, provider, replay, err = s.selectAtCurrentBroker(counts, load, canReplay, replayEnabled)
+	} else {
+		spec, provider, replay, err = s.selectAcrossBrokers(counts, load, canReplay)
 	}
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if replay != nil {
+		if s.replayedByProvider == nil {
+			s.replayedByProvider = make(map[string]bool)
+		}
+		s.replayedByProvider[provider] = true
+	}
+	for i, id := range s.providers {
+		if id == provider {
+			s.nextProvider = (i + 1) % len(s.providers)
+			break
+		}
+	}
+	s.preferBrokerOrder = false
+	return &inproxyBrokerClientSelection{
+		brokerSelection:        s.currentBrokerSelection,
+		brokerSpec:             spec,
+		frontingSpecs:          inproxyBrokerFrontingSpecs(spec, provider),
+		brokerDialParams:       replay,
+		replayEnabled:          replayEnabled,
+		commonCompartmentIDs:   s.commonCompartmentIDs,
+		personalCompartmentIDs: s.personalCompartmentIDs,
+	}, nil
+}
+
+// selectAcrossBrokers selects a broker and fronting provider for common
+// pairing clients by traversing each provider's broker order independently.
+// Replay may jump ahead; otherwise the least occupied provider is selected
+// next. It returns the selected broker spec, the provider ID and, when
+// eligible, the replay dial parameters loaded for that broker and provider,
+// or nil for a fresh dial. It advances the provider's broker cursor before
+// returning.
+func (s *inproxyBrokerSelector) selectAcrossBrokers(
+	counts map[string]int,
+	load func(*parameters.InproxyBrokerSpec) *InproxyBrokerDialParameters,
+	canReplay func(string) bool) (*parameters.InproxyBrokerSpec, string, *InproxyBrokerDialParameters, error) {
+
+	specs := s.brokers
 	s.initializeProviders(specs)
 	if len(s.providers) == 0 {
-		return nil, errors.TraceNew("no broker fronting providers")
+		return nil, "", nil, errors.TraceNew("no broker fronting providers")
 	}
 	cursor := func(provider string) int {
-		if s.exhaustBrokerProviders {
-			return 0
-		}
 		if next, ok := s.nextBrokerByProvider[provider]; ok {
 			return next
 		}
@@ -967,13 +1022,10 @@ func (s *inproxyBrokerSelector) selectClient(config *Config, p parameters.Parame
 		}
 	}
 	if index < 0 {
-		minCount := len(live) + 1
+		minCount := 0
 		for i := range s.providers {
 			id := s.providers[(s.nextProvider+i)%len(s.providers)]
-			if s.exhaustBrokerProviders && s.currentBrokerSelection.tried[id] {
-				continue
-			}
-			if counts[id] < minCount {
+			if i == 0 || counts[id] < minCount {
 				provider, minCount = id, counts[id]
 			}
 		}
@@ -985,7 +1037,7 @@ func (s *inproxyBrokerSelector) selectClient(config *Config, p parameters.Parame
 			}
 		}
 		if index < 0 {
-			return nil, errors.TraceNew("no broker for selected fronting provider")
+			return nil, "", nil, errors.TraceNew("no broker for selected fronting provider")
 		}
 		if canReplay(provider) {
 			if params := load(specs[index]); params != nil && params.FrontedHTTPDialParameters.FrontingProviderID == provider {
@@ -993,39 +1045,87 @@ func (s *inproxyBrokerSelector) selectClient(config *Config, p parameters.Parame
 			}
 		}
 	}
-	if replay != nil {
-		if s.replayedByProvider == nil {
-			s.replayedByProvider = make(map[string]bool)
-		}
-		s.replayedByProvider[provider] = true
+	if s.nextBrokerByProvider == nil {
+		s.nextBrokerByProvider = make(map[string]int)
 	}
-	for i, id := range s.providers {
-		if id == provider {
-			s.nextProvider = (i + 1) % len(s.providers)
-			break
+	s.nextBroker = (index + 1) % len(specs)
+	s.nextBrokerByProvider[provider] = s.nextBroker
+	return specs[index], provider, replay, nil
+}
+
+// selectAtCurrentBroker selects a broker and fronting provider for personal
+// pairing clients and all proxies: the current broker, chosen here if not
+// yet chosen, and an untried provider at it. It returns the broker spec, the
+// provider ID and, when eligible, the replay dial parameters loaded for that
+// broker and provider, or nil for a fresh dial. It marks the provider as
+// tried before returning.
+func (s *inproxyBrokerSelector) selectAtCurrentBroker(
+	counts map[string]int,
+	load func(*parameters.InproxyBrokerSpec) *InproxyBrokerDialParameters,
+	canReplay func(string) bool,
+	replayEnabled bool) (*parameters.InproxyBrokerSpec, string, *InproxyBrokerDialParameters, error) {
+
+	visit := s.currentBrokerSelection
+	if visit.spec == nil {
+		// Common proxies may start at a broker with replay.
+		// Personal pairing must retain its rendezvous order.
+		if !s.personal && replayEnabled && !s.preferBrokerOrder {
+			for i := range s.brokers {
+				index := (visit.index + i) % len(s.brokers)
+				if params := load(s.brokers[index]); params != nil && canReplay(params.FrontedHTTPDialParameters.FrontingProviderID) {
+					visit.index += i
+					break
+				}
+			}
+		}
+		visit.spec = s.brokers[visit.index%len(s.brokers)]
+	}
+	s.initializeProviders(parameters.InproxyBrokerSpecsValue{visit.spec})
+	if len(s.providers) == 0 {
+		return nil, "", nil, errors.TraceNew("no broker fronting providers")
+	}
+	providerIndex := -1
+	var replay *InproxyBrokerDialParameters
+	if !s.preferBrokerOrder {
+		for i := range s.providers {
+			index := (s.nextProvider + i) % len(s.providers)
+			id := s.providers[index]
+			if !canReplay(id) {
+				continue
+			}
+			if params := load(visit.spec); params != nil && params.FrontedHTTPDialParameters.FrontingProviderID == id {
+				providerIndex, replay = index, params
+				break
+			}
 		}
 	}
-	position := index
-	if s.exhaustBrokerProviders {
-		if s.currentBrokerSelection.tried == nil {
-			s.currentBrokerSelection.tried = make(map[string]bool)
+	if providerIndex < 0 {
+		for i := range s.providers {
+			index := (s.nextProvider + i) % len(s.providers)
+			id := s.providers[index]
+			if visit.tried[id] {
+				continue
+			}
+			if providerIndex < 0 || counts[id] < counts[s.providers[providerIndex]] {
+				providerIndex = index
+			}
 		}
-		s.currentBrokerSelection.tried[provider] = true
-		position = s.currentBrokerSelection.index
-	} else {
-		if s.nextBrokerByProvider == nil {
-			s.nextBrokerByProvider = make(map[string]int)
+		if providerIndex < 0 {
+			return nil, "", nil, errors.TraceNew("no untried broker fronting provider")
 		}
-		s.nextBroker = (index + 1) % len(specs)
-		s.nextBrokerByProvider[provider] = s.nextBroker
+		id := s.providers[providerIndex]
+		if canReplay(id) {
+			if params := load(visit.spec); params != nil && params.FrontedHTTPDialParameters.FrontingProviderID == id {
+				replay = params
+			}
+		}
 	}
-	s.preferBrokerOrder = false
-	return &inproxyBrokerClientSelection{
-		brokerSelectCount: position, brokerSpec: specs[index],
-		frontingSpecs:    inproxyBrokerFrontingSpecs(specs[index], provider),
-		brokerDialParams: replay, replayEnabled: replayEnabled,
-		commonCompartmentIDs: s.commonCompartmentIDs, personalCompartmentIDs: s.personalCompartmentIDs,
-	}, nil
+	provider := s.providers[providerIndex]
+	if visit.tried == nil {
+		visit.tried = make(map[string]bool)
+	}
+	visit.tried[provider] = true
+	return visit.spec, provider, replay, nil
 }
 
 // InproxyBrokerClientInstance pairs an inproxy.BrokerClient instance with an
@@ -1039,12 +1139,7 @@ type InproxyBrokerClientInstance struct {
 	// brokerClientID is a random, diagnostics-only identifier that
 	// correlates notices for one broker client. It is not sent to the
 	// broker or server.
-	brokerClientID string
-	// Broker selection index at construction; not changed by later selections.
-	clientBrokerSelectCount int
-	// Broker selection state when added to InproxyBrokerClientManager;
-	// never reassigned. matchesCurrentBrokerSelection compares this pointer
-	// with currentBrokerSelection.
+	brokerClientID                string
 	brokerSelection               *inproxyBrokerSelectionState
 	config                        *Config
 	brokerClientManager           *InproxyBrokerClientManager
@@ -1081,7 +1176,7 @@ type InproxyBrokerClientInstance struct {
 // new client. brokerSpec retains all providers for replay hash validation;
 // frontingSpecs contains only the selected provider's specs.
 type inproxyBrokerClientSelection struct {
-	brokerSelectCount      int
+	brokerSelection        *inproxyBrokerSelectionState
 	brokerSpec             *parameters.InproxyBrokerSpec
 	frontingSpecs          parameters.FrontingSpecs
 	brokerDialParams       *InproxyBrokerDialParameters
@@ -1090,7 +1185,7 @@ type inproxyBrokerClientSelection struct {
 	personalCompartmentIDs []inproxy.ID
 }
 
-func NewInproxyBrokerClientInstance(
+func newInproxyBrokerClientInstance(
 	config *Config,
 	p parameters.ParametersAccessor,
 	brokerClientManager *InproxyBrokerClientManager,
@@ -1102,29 +1197,25 @@ func NewInproxyBrokerClientInstance(
 	brokerDialParams := selection.brokerDialParams
 	var err error
 
-	// Generate new broker dial parameters if not replaying. Later, isReplay
-	// is used to report the replay metric.
+	// Generate new broker dial parameters if not replaying. isReplay also
+	// determines the replay metric when preparing the dial configurations.
+	// The selector has already validated any replay parameters.
 
 	isReplay := brokerDialParams != nil
-
-	// Handle legacy replay records by discarding replay when required fields
-	// are missing.
-	if isReplay && brokerDialParams.FrontedHTTPDialParameters == nil {
-		isReplay = false
-	}
 
 	if !isReplay {
 		brokerDialParams, err = MakeInproxyBrokerDialParameters(
 			config, p, networkID, brokerSpec, selection.frontingSpecs, brokerClientManager.tlsCache)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
 	} else {
-		brokerDialParams.brokerSpec = brokerSpec
-		err := brokerDialParams.prepareDialConfigs(config, p, true, brokerClientManager.tlsCache)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		err = brokerDialParams.prepareDialConfigs(config, p, isReplay, brokerClientManager.tlsCache)
+	}
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	brokerClientPrivateKey, err := brokerClientManager.brokerClientPrivateKey()
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	// Load broker key material.
@@ -1144,30 +1235,6 @@ func NewInproxyBrokerClientInstance(
 
 	roundTripper := NewInproxyBrokerRoundTripper(p, brokerDialParams)
 
-	// All broker clients for a proxy must announce the same proxy ID. Reuse
-	// the InproxyBrokerClientManager key, generating it once if no key was
-	// configured.
-
-	var brokerClientPrivateKey inproxy.SessionPrivateKey
-	if isProxy {
-		brokerClientManager.proxyKeyOnce.Do(func() {
-			if config.InproxyProxySessionPrivateKey != "" {
-				brokerClientManager.proxyKey, brokerClientManager.proxyKeyErr = inproxy.SessionPrivateKeyFromString(config.InproxyProxySessionPrivateKey)
-			} else {
-				brokerClientManager.proxyKey, brokerClientManager.proxyKeyErr = inproxy.GenerateSessionPrivateKey()
-			}
-		})
-		brokerClientPrivateKey, err = brokerClientManager.proxyKey, brokerClientManager.proxyKeyErr
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	} else {
-		brokerClientPrivateKey, err = inproxy.GenerateSessionPrivateKey()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-
 	// InproxyBrokerClientInstance implements the
 	// inproxy.BrokerDialCoordinator interface and passes itself to
 	// inproxy.NewBrokerClient in order to provide the round tripper, key
@@ -1178,7 +1245,7 @@ func NewInproxyBrokerClientInstance(
 	// InproxyBrokerClientInstance for efficient lookup.
 
 	b := &InproxyBrokerClientInstance{
-		clientBrokerSelectCount:     selection.brokerSelectCount,
+		brokerSelection:             selection.brokerSelection,
 		frontingProviderID:          brokerDialParams.FrontedHTTPDialParameters.FrontingProviderID,
 		brokerClientID:              brokerDialParams.brokerClientID,
 		config:                      config,
@@ -1685,7 +1752,7 @@ func (b *InproxyBrokerClientInstance) BrokerClientRoundTripperFailed(roundTrippe
 	// they release it; see brokerClientFailed.
 	//
 	// Limitation: a transport-level failure may unnecessarily reset the
-	// broker session state; see comment in NewInproxyBrokerClientInstance.
+	// broker session state; see comment in newInproxyBrokerClientInstance.
 
 	b.brokerClientManager.brokerClientFailed(b)
 }
