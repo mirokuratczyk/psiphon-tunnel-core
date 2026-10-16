@@ -1409,12 +1409,15 @@ func (*proxyAcquisitionTestRoundTripper) Close() error { return nil }
 
 // TestProxyWorkerBrokerAcquisition verifies that one proxy announcement
 // worker acquires exactly one broker client and releases it on every exit:
-// a shared precheck, a NoMatch announcement, a local error before any request
-// and a malformed response. It checks that supervisor timing lookups do not
-// acquire a client and that switching to another candidate at the same broker
-// keeps the announcement pacing.
+// a shared precheck, a NoMatch announcement, a local error before any request,
+// a malformed response, and a matched announcement whose answer is sent. In
+// the answer case the lease is held through the announce and answer round
+// trips and released after the answer response, before any data relay. It
+// checks that supervisor timing lookups do not acquire a client and that
+// switching to another candidate at the same broker keeps the announcement
+// pacing.
 func TestProxyWorkerBrokerAcquisition(t *testing.T) {
-	for _, mode := range []string{"precheck", "no-match", "local-error", "malformed"} {
+	for _, mode := range []string{"precheck", "no-match", "local-error", "malformed", "answer"} {
 		t.Run(mode, func(t *testing.T) {
 			key, err := GenerateSessionPrivateKey()
 			if err != nil {
@@ -1433,17 +1436,43 @@ func TestProxyWorkerBrokerAcquisition(t *testing.T) {
 				t.Fatal(err)
 			}
 			requests, responses, acquired, released := 0, 0, 0, 0
+			// releasedAtAnswer records the lease state observed by the
+			// broker when the answer request arrives.
+			releasedAtAnswer := -1
 			rt := &proxyAcquisitionTestRoundTripper{sessions: sessions, handle: func(payload []byte) ([]byte, error) {
+				requests++
+				if mode == "answer" && requests == 2 {
+					if _, err := UnmarshalProxyAnswerRequest(payload); err != nil {
+						return nil, err
+					}
+					releasedAtAnswer = released
+					// NoAwaitingClient ends the worker after the
+					// answer without a data relay.
+					return MarshalProxyAnswerResponse(&ProxyAnswerResponse{NoAwaitingClient: true})
+				}
 				request, err := UnmarshalProxyAnnounceRequest(payload)
 				if err != nil {
 					return nil, err
 				}
-				requests++
 				if request.PreCheckTactics != (mode == "precheck") {
 					t.Error("unexpected request type")
 				}
 				if mode == "malformed" {
 					return []byte("invalid response"), nil
+				}
+				if mode == "answer" {
+					// A match with an unusable offer SDP: the proxy's
+					// local WebRTC setup fails and it reports the error
+					// in its answer, which still requires the lease.
+					id, err := MakeID()
+					if err != nil {
+						return nil, err
+					}
+					return MarshalProxyAnnounceResponse(&ProxyAnnounceResponse{
+						ConnectionID:            id,
+						SelectedProtocolVersion: ProtocolVersion1,
+						ClientOfferSDP:          WebRTCSessionDescription{Type: 1, SDP: "invalid"},
+					})
 				}
 				return MarshalProxyAnnounceResponse(&ProxyAnnounceResponse{NoMatch: true})
 			}}
@@ -1503,12 +1532,23 @@ func TestProxyWorkerBrokerAcquisition(t *testing.T) {
 			if (err == nil) != (mode == "precheck") || acquired != 1 || released != 1 {
 				t.Fatalf("incorrect ownership: acquired=%d released=%d err=%v", acquired, released, err)
 			}
+			if mode == "answer" && releasedAtAnswer != 0 {
+				t.Fatalf("lease released before the answer request: released=%d", releasedAtAnswer)
+			}
 			wantRequests := 1
 			if mode == "local-error" {
 				wantRequests = 0
 			}
+			if mode == "answer" {
+				wantRequests = 2
+			}
 			wantResponses := 0
 			if mode == "no-match" || mode == "precheck" {
+				wantResponses = 1
+			}
+			if mode == "answer" {
+				// The announce match is a decoded response; ProxyAnswer
+				// does not notify the coordinator.
 				wantResponses = 1
 			}
 			if requests != wantRequests || responses != wantResponses {

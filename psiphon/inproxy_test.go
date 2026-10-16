@@ -1876,6 +1876,20 @@ func TestInproxyBrokerReplayValidation(t *testing.T) {
 			if loadBrokerReplayTestParameters(t, spec) != nil {
 				t.Fatal("accepted invalid provider replay")
 			}
+			// The invalid record is deleted from the datastore, not merely
+			// rejected: a raw read of its key finds nothing.
+			key := makeNetworkReplayParametersKey[InproxyBrokerDialParameters]("TEST", spec.BrokerPublicKey)
+			var raw []byte
+			err := datastoreView(func(tx *datastoreTx) error {
+				raw = tx.bucket(datastoreNetworkReplayParametersBucket).get(key)
+				return nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if raw != nil {
+				t.Fatal("invalid replay record was not deleted from the datastore")
+			}
 			if loadBrokerReplayTestParameters(t, other) == nil {
 				t.Fatal("validation removed another broker's valid replay")
 			}
@@ -2345,9 +2359,10 @@ func TestInproxyBrokerAbortedInitialDialCleanup(t *testing.T) {
 // TestInproxyBrokerCallerDeadline verifies that a caller deadline during the
 // initial dial, the request or the response body read is not classified as
 // a transport failure, while a per-request timeout with a live caller is a
-// failure that unshares the client and deletes its replay record. The test
-// invokes the failure callback itself when a failure is classified; the
-// callback path through inproxy.BrokerClient is covered separately.
+// failure that unshares the client and deletes its replay record. The
+// request and body phases drive a real broker API request through
+// inproxy.BrokerClient, so its RoundTripperFailedError classification, not
+// the test, decides whether BrokerClientRoundTripperFailed is invoked.
 func TestInproxyBrokerCallerDeadline(t *testing.T) {
 	t.Run("dial", func(t *testing.T) {
 		m := newGateTestManager(t)
@@ -2360,13 +2375,27 @@ func TestInproxyBrokerCallerDeadline(t *testing.T) {
 			t.Fatalf("caller deadline during initial dial classified as transport failure: %v", err)
 		}
 	})
+	payload, err := inproxy.MarshalClientRelayedPacketResponse(&inproxy.ClientRelayedPacketResponse{PacketToServer: []byte("reply")})
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, phase := range []string{"request", "body"} {
 		for _, callerDeadline := range []bool{true, false} {
 			t.Run(fmt.Sprintf("%s/caller=%v", phase, callerDeadline), func(t *testing.T) {
-				m, c, release := newBrokerResponseTestClient(t, nil)
+				m, c, release := newBrokerResponseTestClient(t, payload)
 				defer release()
-				c.brokerResponseSucceededForTest(c.roundTripper)
 				c.replayRetainFailedProbability = 0
+				// Establish the Noise session and share the client with a
+				// real round trip, so the stalled request below is an API
+				// request on an established session.
+				sessionCtx, cancelSession := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancelSession()
+				if _, err := c.brokerClient.ClientRelayedPacket(sessionCtx, &inproxy.ClientRelayedPacketRequest{}); err != nil {
+					t.Fatal(err)
+				}
+				if m.sharedClient != c || loadBrokerReplayTestParameters(t, c.brokerDialParams.brokerSpec) == nil {
+					t.Fatal("session request did not share the client and store replay")
+				}
 				c.roundTripper.conn.transport = brokerHTTPTestTransport(func(req *http.Request) (*http.Response, error) {
 					if phase == "body" {
 						return &http.Response{StatusCode: http.StatusOK, Body: brokerDeadlineTestBody{req.Context()}}, nil
@@ -2378,20 +2407,19 @@ func TestInproxyBrokerCallerDeadline(t *testing.T) {
 				if callerDeadline {
 					callerTimeout, requestTimeout = requestTimeout, callerTimeout
 				}
+				c.relayedPacketRequestTimeout = requestTimeout
 				ctx, cancel := context.WithTimeout(context.Background(), callerTimeout)
 				defer cancel()
-				_, err := c.roundTripper.RoundTrip(ctx, 0, requestTimeout, nil)
+				_, err := c.brokerClient.ClientRelayedPacket(ctx, &inproxy.ClientRelayedPacketRequest{})
 				var failure *inproxy.RoundTripperFailedError
 				if err == nil || stderrors.As(err, &failure) == callerDeadline {
 					t.Fatalf("incorrect failure classification: %v", err)
 				}
-				if failure != nil {
-					c.BrokerClientRoundTripperFailed(c.roundTripper)
-				}
-				stored, err := loadInproxyBrokerReplayParameters("TEST", c.brokerDialParams.brokerSpec, time.Hour)
-				ok := stored != nil
-				if err != nil || ok != callerDeadline || (m.sharedClient == c) != callerDeadline {
-					t.Fatalf("incorrect sharing/replay after deadline: stored=%v err=%v", ok, err)
+				stored := loadBrokerReplayTestParameters(t, c.brokerDialParams.brokerSpec)
+				if (stored != nil) != callerDeadline || (m.sharedClient == c) != callerDeadline ||
+					m.clients[c].failed == callerDeadline {
+					t.Fatalf("incorrect sharing/replay after deadline: stored=%v shared=%v failed=%v",
+						stored != nil, m.sharedClient == c, m.clients[c].failed)
 				}
 			})
 		}
@@ -2487,7 +2515,54 @@ func TestInproxyBrokerFailureDrainsLeases(t *testing.T) {
 	}
 	m.brokerClientFailed(c)
 	first()
+	// A repeated failure report for an already-failed client is a no-op: it
+	// must not wake waiters again. With the client limit lowered so the
+	// draining client fills it, a new acquisition blocks on b.changed; the
+	// repeated failure must leave that channel untouched so the waiter
+	// stays blocked.
+	if err := setGateTestParameters(m.config, "", map[string]interface{}{
+		parameters.InproxyClientMaxBrokerClients: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	m.mutex.Lock()
+	changed := m.changed
+	m.mutex.Unlock()
+	waiterCtx, cancelWaiter := context.WithCancel(context.Background())
+	defer cancelWaiter()
+	waiterDone := make(chan error, 1)
+	go func() {
+		_, _, release, err := m.GetBrokerClient(waiterCtx, "TEST")
+		if err == nil {
+			release()
+		}
+		waiterDone <- err
+	}()
+	// The waiter parks on the current b.changed, which the first failure
+	// created when it signalled. Allow it to reach the select, then
+	// confirm it did not acquire (the limit is full).
+	time.Sleep(20 * time.Millisecond)
+	select {
+	case err := <-waiterDone:
+		t.Fatalf("acquisition did not park on the full gate: %v", err)
+	default:
+	}
 	m.brokerClientFailed(c)
+	m.mutex.Lock()
+	sameChannel := m.changed == changed
+	m.mutex.Unlock()
+	if !sameChannel {
+		t.Fatal("repeated failure signalled waiters")
+	}
+	select {
+	case err := <-waiterDone:
+		t.Fatalf("repeated failure woke the parked acquisition: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	cancelWaiter()
+	if err := <-waiterDone; err == nil {
+		t.Fatal("parked acquisition did not return on cancel")
+	}
 	c.BrokerClientResponseReceived(c.roundTripper, false)
 	if c.roundTripper.runCtx.Err() != nil || m.sharedClient != nil || !m.clients[c].failed {
 		t.Fatal("failure interrupted another lease or late response promoted")
@@ -4515,6 +4590,199 @@ func TestInproxyBrokerReplayCursorAndNoMatch(t *testing.T) {
 				next := getGateTestClient(t, m)
 				if next.brokerDialParams.isReplay || next.brokerDialParams.brokerSpec.BrokerPublicKey != ordered[2].BrokerPublicKey {
 					t.Fatal("replay did not advance provider cursor past chosen broker")
+				}
+			}
+		})
+	}
+}
+
+// TestInproxyBrokerNoMatchExactRouteReplay verifies that after common client
+// NoMatch failover the next route is chosen by broker order, and that replay
+// is still used at that exact broker when its stored provider's allowance is
+// unconsumed: the search does not jump to a different broker for replay,
+// but it does not forgo an eligible replay at the ordered broker either.
+func TestInproxyBrokerNoMatchExactRouteReplay(t *testing.T) {
+	// Three single-provider brokers, A, B and A. A seed is chosen so the
+	// broker order is A, B, A: the first search replays ordered[0]; after
+	// failover a correct order-first search stops at ordered[1] and
+	// replays B there, while a replay-first search would skip to the A
+	// record at ordered[2] only if it ignored the consumed A allowance.
+	specs := parameters.InproxyBrokerSpecsValue{newProviderTestBroker(t, "A"), newProviderTestBroker(t, "B"), newProviderTestBroker(t, "A")}
+	m := newProviderTestManager(t, 1, specs...)
+	if err := setGateTestParameters(m.config, "no-match", map[string]interface{}{
+		parameters.InproxyBrokerSpecs:                           specs,
+		parameters.InproxyClientMaxBrokerClients:                1,
+		parameters.InproxyReplayBrokerDialParametersProbability: 1.0,
+		parameters.InproxyClientNoMatchFailoverProbability:      1.0,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var ordered parameters.InproxyBrokerSpecsValue
+	for seed := byte(0); ; seed++ {
+		m.selector.reset()
+		m.selector.seed = &prng.Seed{seed}
+		ordered = initializeTestSelector(t, m, &m.selector)
+		got := ""
+		for _, spec := range ordered {
+			got += spec.BrokerFrontingSpecs[0].FrontingProviderID
+		}
+		if got == "ABA" {
+			break
+		}
+		if seed == 255 {
+			t.Fatal("no seed orders the brokers A, B, A")
+		}
+	}
+	m.networkID = "TEST"
+	for _, spec := range ordered {
+		params := makeBrokerReplayTestParameters(t, m, spec, spec.BrokerFrontingSpecs[0].FrontingProviderID)
+		if err := storeInproxyBrokerReplayParameters("TEST", params); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Start provider preference at A so the first search replays
+	// ordered[0], the first A broker.
+	m.selector.providers = []string{"A", "B"}
+	first := getGateTestClient(t, m)
+	if !first.brokerDialParams.isReplay || first.brokerPublicKey.String() != ordered[0].BrokerPublicKey {
+		t.Fatal("first search did not replay the first ordered broker")
+	}
+	first.BrokerClientResponseReceived(first.roundTripper, true)
+	if first.roundTripper.runCtx.Err() == nil || !m.selector.preferBrokerOrder {
+		t.Fatal("NoMatch did not fail over with order-first selection")
+	}
+	next := getGateTestClient(t, m)
+	if next.brokerPublicKey.String() != ordered[1].BrokerPublicKey || next.frontingProviderID != "B" {
+		t.Fatalf("post-NoMatch selection did not follow broker order: broker %s provider %s",
+			next.brokerPublicKey, next.frontingProviderID)
+	}
+	if !next.brokerDialParams.isReplay {
+		t.Fatal("post-NoMatch selection did not replay the eligible record at the ordered broker")
+	}
+	if !m.selector.replayedByProvider["B"] || m.selector.preferBrokerOrder {
+		t.Fatal("exact-route replay did not consume the allowance or clear order-first")
+	}
+}
+
+// TestInproxyBrokerIdleExpiryPreservesReplay verifies that idle expiry of the
+// shared client neither deletes the stored replay record nor leaves the
+// provider's replay allowance consumed: the next search replays the same
+// broker and provider, and a transport failure of that replayed client then
+// deletes the record. One broker and one provider make the replayed route
+// unambiguous.
+func TestInproxyBrokerIdleExpiryPreservesReplay(t *testing.T) {
+	spec := newProviderTestBroker(t, "A")
+	m := newProviderTestManager(t, 1, spec)
+	if err := setGateTestParameters(m.config, "", map[string]interface{}{
+		parameters.InproxyBrokerSpecs:                           parameters.InproxyBrokerSpecsValue{spec},
+		parameters.InproxyClientMaxBrokerClients:                1,
+		parameters.InproxyReplayBrokerDialParametersProbability: 1.0,
+		parameters.InproxyReplayBrokerRetainFailedProbability:   0.0,
+		parameters.InproxyClientBrokerClientIdleTimeout:         "60s",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var release func()
+	first := getGateTestClient(t, m, &release)
+	if first.brokerDialParams.isReplay {
+		t.Fatal("first client replayed with no stored record")
+	}
+	// Success stores the record and shares the client. Releasing the only
+	// lease arms the idle timer; expiry then closes the shared client.
+	first.brokerResponseSucceededForTest(first.roundTripper)
+	if loadBrokerReplayTestParameters(t, spec) == nil {
+		t.Fatal("success did not store a replay record")
+	}
+	if !m.selector.replayedByProvider["A"] {
+		// The allowance is consumed only when a replay is selected; a fresh
+		// dial leaves it clear. Consume it explicitly so the test checks
+		// that expiry refreshes it, as it would after a replayed search.
+		m.selector.replayedByProvider = map[string]bool{"A": true}
+	}
+	release()
+	if m.sharedClient != first || m.sharedIdleTimer == nil {
+		t.Fatal("released shared client did not arm the idle timer")
+	}
+	expireSharedClientForTest(m, first)
+	if m.sharedClient != nil || len(m.clients) != 0 || first.roundTripper.runCtx.Err() == nil {
+		t.Fatal("idle expiry did not close the shared client")
+	}
+	if len(m.selector.replayedByProvider) != 0 {
+		t.Fatal("idle expiry did not refresh the replay allowance")
+	}
+	if loadBrokerReplayTestParameters(t, spec) == nil {
+		t.Fatal("idle expiry deleted the replay record")
+	}
+
+	second := getGateTestClient(t, m)
+	if !second.brokerDialParams.isReplay || second.frontingProviderID != "A" ||
+		second.brokerDialParams.brokerSpec.BrokerPublicKey != spec.BrokerPublicKey {
+		t.Fatal("search after idle expiry did not replay the stored route")
+	}
+	if !m.selector.replayedByProvider["A"] {
+		t.Fatal("replay after idle expiry did not consume the allowance")
+	}
+	// The replayed client owns the record: its transport failure deletes it.
+	second.BrokerClientRoundTripperFailed(second.roundTripper)
+	if loadBrokerReplayTestParameters(t, spec) != nil {
+		t.Fatal("replayed client failure did not delete the record")
+	}
+}
+
+// TestInproxyProxyFailureRetryPeriod verifies the common pairing proxy's
+// retention of a recently successful broker client across a transport
+// failure: within InproxyProxyOnBrokerClientFailedRetryPeriod of the last
+// success the client stays shared, is not marked failed and keeps its replay
+// record; after the period, or in personal pairing mode, or for a client
+// manager, the failure unshares and marks the client as usual.
+func TestInproxyProxyFailureRetryPeriod(t *testing.T) {
+	for _, mode := range []string{"within", "expired", "personal", "client"} {
+		t.Run(mode, func(t *testing.T) {
+			spec := newProviderTestBroker(t, "A")
+			m := newProviderTestManager(t, 1, spec)
+			m.isProxy = mode != "client"
+			if mode == "personal" {
+				id, err := inproxy.MakeID()
+				if err != nil {
+					t.Fatal(err)
+				}
+				m.config.InproxyProxyPersonalCompartmentID = id.String()
+			}
+			if err := setGateTestParameters(m.config, "", map[string]interface{}{
+				parameters.InproxyBrokerSpecs:                           parameters.InproxyBrokerSpecsValue{spec},
+				parameters.InproxyProxyMaxBrokerClients:                 1,
+				parameters.InproxyClientMaxBrokerClients:                1,
+				parameters.InproxyReplayBrokerDialParametersProbability: 1.0,
+				parameters.InproxyReplayBrokerRetainFailedProbability:   0.0,
+				parameters.InproxyProxyOnBrokerClientFailedRetryPeriod:  "1h",
+			}); err != nil {
+				t.Fatal(err)
+			}
+			var release func()
+			c := getGateTestClient(t, m, &release)
+			defer release()
+			c.brokerResponseSucceededForTest(c.roundTripper)
+			if m.sharedClient != c || loadBrokerReplayTestParameters(t, spec) == nil {
+				t.Fatal("success did not share the client and store replay")
+			}
+			if mode == "expired" {
+				c.mutex.Lock()
+				c.lastSuccess = time.Now().Add(-2 * time.Hour)
+				c.mutex.Unlock()
+			}
+			c.BrokerClientRoundTripperFailed(c.roundTripper)
+			retained := mode == "within"
+			if (m.sharedClient == c) != retained || m.clients[c].failed == retained ||
+				(loadBrokerReplayTestParameters(t, spec) != nil) != retained {
+				t.Fatalf("retry period handling: shared=%v failed=%v replay=%v want retained=%v",
+					m.sharedClient == c, m.clients[c].failed, loadBrokerReplayTestParameters(t, spec) != nil, retained)
+			}
+			if retained {
+				// A retained client is still usable and still shared for
+				// the next acquisition.
+				if getGateTestClient(t, m) != c || c.roundTripper.runCtx.Err() != nil {
+					t.Fatal("retained client was not reused")
 				}
 			}
 		})
