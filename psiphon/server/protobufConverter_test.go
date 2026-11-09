@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	"github.com/Psiphon-Labs/psiphon-tunnel-core/psiphon/common"
+	"github.com/Psiphon-Labs/psiphon-tunnel-core/psiphon/common/protocol"
 	pb "github.com/Psiphon-Labs/psiphon-tunnel-core/psiphon/server/pb/psiphond"
 )
 
@@ -63,6 +64,43 @@ func TestProtobufInproxyBrokerSelectionFields(t *testing.T) {
 	}, broker, "inproxy_broker")
 	if !broker.GetInproxyBrokerIsReplay() || broker.GetInproxyBrokerCandidateNumber() != 2 {
 		t.Fatalf("InproxyBroker dropped broker selection fields: %+v", broker)
+	}
+}
+
+// TestInproxyBrokerTimingFields verifies that the in-proxy dial broker
+// client acquire duration and the broker client transport and session
+// durations survive packed encoding, pass inproxyDialParams validation, are
+// logged as ints, and reach InproxyDialParams.
+func TestInproxyBrokerTimingFields(t *testing.T) {
+	params := common.APIParameters{
+		"inproxy_dial_broker_client_acquire_duration": "5",
+		"inproxy_broker_transport_dial_duration":      "12",
+		"inproxy_broker_session_handshake_duration":   "34",
+	}
+	packed, err := protocol.EncodePackedAPIParameters(params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	params, err = protocol.DecodePackedAPIParameters(packed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = validateRequestParams(params, inproxyDialParams)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logFields := getRequestLogFields(
+		"", "", "", GeoIPData{}, nil, params, inproxyDialParams)
+	if logFields["inproxy_dial_broker_client_acquire_duration"] != 5 ||
+		logFields["inproxy_broker_transport_dial_duration"] != 12 ||
+		logFields["inproxy_broker_session_handshake_duration"] != 34 {
+		t.Fatalf("unexpected log fields: %v", logFields)
+	}
+	dialParams := protobufPopulateInproxyDialParams(logFields)
+	if dialParams.GetInproxyDialBrokerClientAcquireDuration() != 5 ||
+		dialParams.GetInproxyBrokerTransportDialDuration() != 12 ||
+		dialParams.GetInproxyBrokerSessionHandshakeDuration() != 34 {
+		t.Fatalf("InproxyDialParams dropped broker timing fields: %+v", dialParams)
 	}
 }
 

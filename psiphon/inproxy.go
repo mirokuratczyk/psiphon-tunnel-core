@@ -173,6 +173,7 @@ func (b *InproxyBrokerClientManager) NetworkChanged() error {
 // updates and shutdown may close broker clients while they are in use.
 func (b *InproxyBrokerClientManager) GetBrokerClient(
 	ctx context.Context, networkID string) (*inproxy.BrokerClient, *InproxyBrokerDialParameters, func(), error) {
+	acquireStart := time.Now()
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, nil, nil, errors.Trace(err)
@@ -202,6 +203,8 @@ func (b *InproxyBrokerClientManager) GetBrokerClient(
 		instance.mutex.Unlock()
 		dialParams.isReuse = reused
 		dialParams.candidateNumber = instance.candidateNumber
+		dialParams.acquireDuration = time.Since(acquireStart)
+		dialParams.brokerClientTimings = instance.roundTripper.timings
 		release := sync.OnceFunc(func() {
 			b.mutex.Lock()
 			defer b.mutex.Unlock()
@@ -2098,6 +2101,13 @@ type InproxyBrokerDialParameters struct {
 	// takeBrokerClientCounts call. A shared client reused after a restart
 	// keeps the ordinal it was created with.
 	candidateNumber int `json:"-"`
+	// acquireDuration is the time the caller spent in GetBrokerClient,
+	// including any wait and constructing a new broker client.
+	acquireDuration time.Duration `json:"-"`
+	// brokerClientTimings is the broker client's transport and session
+	// establishment timings, set after the copy is made for a new broker
+	// client; see InproxyBrokerRoundTripper.
+	brokerClientTimings *inproxyBrokerClientTimings `json:"-"`
 	// replayRecordHash is the SHA-256 of the stored record bytes this
 	// broker client loaded or stored, used to check for changes before
 	// deleting replay parameters.
@@ -2398,6 +2408,23 @@ func (brokerDialParams *InproxyBrokerDialParameters) GetMetrics() common.LogFiel
 	// see InproxyBrokerDialParameters for when the count restarts.
 	logFields["inproxy_broker_candidate_number"] = strconv.Itoa(brokerDialParams.candidateNumber)
 
+	logFields["inproxy_dial_broker_client_acquire_duration"] = strconv.FormatInt(
+		brokerDialParams.acquireDuration.Milliseconds(), 10)
+
+	// The broker client's establishment timings are reported whenever they
+	// are known, including when the broker client is reused and they were
+	// measured during an earlier dial.
+	if timings := brokerDialParams.brokerClientTimings; timings != nil {
+		if d := timings.transportDialDuration.Load(); d > 0 {
+			logFields["inproxy_broker_transport_dial_duration"] = strconv.FormatInt(
+				time.Duration(d).Milliseconds(), 10)
+		}
+		if d := timings.sessionHandshakeDuration.Load(); d > 0 {
+			logFields["inproxy_broker_session_handshake_duration"] = strconv.FormatInt(
+				time.Duration(d).Milliseconds(), 10)
+		}
+	}
+
 	// TODO: include tlsConn.GetMetrics tls_did_resume/tls_sent_ticket.
 	// Requires a reference to the InproxyBrokerRoundTripper.
 
@@ -2442,6 +2469,20 @@ type InproxyBrokerRoundTripper struct {
 	// transportEstablished, when set, is invoked once after the initial
 	// DialMeek succeeds, before any request is sent.
 	transportEstablished func()
+
+	// timings is shared with the InproxyBrokerDialParameters copies that
+	// GetBrokerClient returns for this broker client.
+	timings *inproxyBrokerClientTimings
+}
+
+// inproxyBrokerClientTimings records how long a broker client took to
+// establish its transport, the initial DialMeek, and its broker session,
+// the Noise handshake round trip. Each is set once by
+// InproxyBrokerRoundTripper and read concurrently when reporting metrics;
+// zero means not yet established.
+type inproxyBrokerClientTimings struct {
+	transportDialDuration    atomic.Int64
+	sessionHandshakeDuration atomic.Int64
 }
 
 // NewInproxyBrokerRoundTripper creates a new InproxyBrokerRoundTripper. The
@@ -2463,6 +2504,7 @@ func NewInproxyBrokerRoundTripper(
 		dialCompleted:    make(chan struct{}),
 		failureThreshold: p.Duration(
 			parameters.InproxyBrokerRoundTripStatusCodeFailureThreshold),
+		timings: &inproxyBrokerClientTimings{},
 	}
 }
 
@@ -2603,6 +2645,7 @@ func (rt *InproxyBrokerRoundTripper) RoundTrip(
 
 		// DialMeek hasn't been called yet.
 
+		dialStart := time.Now()
 		conn, err := DialMeek(
 			requestCtx,
 			rt.brokerDialParams.FrontedHTTPDialParameters.meekConfig,
@@ -2625,6 +2668,8 @@ func (rt *InproxyBrokerRoundTripper) RoundTrip(
 		if err != nil {
 			return nil, errors.Trace(rt.dialErr)
 		}
+
+		rt.timings.transportDialDuration.Store(int64(time.Since(dialStart)))
 
 		if rt.transportEstablished != nil {
 			rt.transportEstablished()
@@ -2719,6 +2764,13 @@ func (rt *InproxyBrokerRoundTripper) RoundTrip(
 		}
 		return nil, errors.Trace(err)
 	}
+
+	// A new broker client has no session, so every request on it begins
+	// with a Noise handshake, and no request can complete before a
+	// handshake round trip does. The first round trip to complete is
+	// therefore a handshake round trip: its duration is the session
+	// duration. Later round trips do not change it.
+	rt.timings.sessionHandshakeDuration.CompareAndSwap(0, int64(roundTripDuration))
 
 	return responsePayload, nil
 }

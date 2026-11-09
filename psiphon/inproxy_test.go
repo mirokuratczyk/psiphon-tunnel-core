@@ -3009,9 +3009,11 @@ func TestInproxyMetricsBeforeBrokerAcquisition(t *testing.T) {
 // metrics that identify which broker client a tunnel used. Candidate numbers
 // are creation ordinals within the manager's counting window and continue
 // past M. A new client reports no reuse; a reused client reports reuse with
-// the winner's ordinal. Every candidate's broker requests carry its replay
-// flag and ordinal. takeBrokerClientCounts reports creations and peak,
-// restarts the ordinal, and seeds the next peak with clients still tracked.
+// the winner's ordinal. Every acquisition reports how long it waited, and
+// one parked at the limit reports at least its parked time. Every
+// candidate's broker requests carry its replay flag and ordinal.
+// takeBrokerClientCounts reports creations and peak, restarts the ordinal,
+// and seeds the next peak with clients still tracked.
 func TestInproxyBrokerRacingMetrics(t *testing.T) {
 	m := newGateTestManager(t)
 	var releaseA, releaseB func()
@@ -3038,7 +3040,7 @@ func TestInproxyBrokerRacingMetrics(t *testing.T) {
 		}
 	}
 	// A third acquisition parks at M=2 until b is shared, then reuses b
-	// and reports b's ordinal and reuse status.
+	// and reports b's ordinal, reuse status and its wait.
 	parent, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	ctx := &inproxyGateWaitContext{Context: parent, waiting: make(chan struct{})}
@@ -3057,6 +3059,8 @@ func TestInproxyBrokerRacingMetrics(t *testing.T) {
 	case <-parent.Done():
 		t.Fatal("acquisition did not wait at the limit")
 	}
+	parkedWait := 10 * time.Millisecond
+	time.Sleep(parkedWait)
 	b.brokerResponseSucceededForTest(b.roundTripper)
 	var waited result
 	select {
@@ -3069,6 +3073,10 @@ func TestInproxyBrokerRacingMetrics(t *testing.T) {
 		fields["inproxy_broker_candidate_number"] != "2" {
 		t.Fatalf("reused client metrics: %v", fields)
 	}
+	if waitMs, err := strconv.Atoi(fields["inproxy_dial_broker_client_acquire_duration"].(string)); err != nil ||
+		time.Duration(waitMs)*time.Millisecond < parkedWait {
+		t.Fatalf("parked acquisition wait not reported: %v", fields["inproxy_dial_broker_client_acquire_duration"])
+	}
 	// A fresh candidate after the first two close continues the ordinal
 	// past M and reports no reuse.
 	releaseA()
@@ -3080,6 +3088,9 @@ func TestInproxyBrokerRacingMetrics(t *testing.T) {
 	if c.candidateNumber != 3 || fields["inproxy_broker_candidate_number"] != "3" ||
 		fields["inproxy_broker_is_reuse"] != "0" {
 		t.Fatalf("fresh candidate metrics: %v", fields)
+	}
+	if _, err := strconv.Atoi(fields["inproxy_dial_broker_client_acquire_duration"].(string)); err != nil {
+		t.Fatalf("acquisition wait not reported without a wait: %v", fields["inproxy_dial_broker_client_acquire_duration"])
 	}
 	releaseC()
 	if created, peak := m.takeBrokerClientCounts(); created != 3 || peak != 2 {
@@ -5514,6 +5525,128 @@ func TestInproxyBrokerShareOnTransportRealDial(t *testing.T) {
 				t.Fatal("client not shared after first decoded response")
 			}
 		})
+	}
+}
+
+// TestInproxyBrokerClientTimings drives a new broker client's DialMeek and
+// requests against a local TLS server that delays only the first request,
+// the Noise handshake round trip. It verifies that the broker client records
+// its transport and session durations once, that the session duration is
+// the handshake round trip, and that dial parameter copies, both the one
+// made before the broker client was established and a later reused copy,
+// report them.
+func TestInproxyBrokerClientTimings(t *testing.T) {
+	privateKey, err := inproxy.GenerateSessionPrivateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicKey, err := privateKey.GetPublicKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret, err := inproxy.GenerateRootObfuscationSecret()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessions, err := inproxy.NewResponderSessions(privateKey, secret, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const handshakeDelay = 20 * time.Millisecond
+	var requestCount atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requestCount.Add(1) == 1 {
+			time.Sleep(handshakeDelay)
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		packet, err := sessions.HandlePacket(body, func(_ inproxy.ID, _ []byte) ([]byte, error) {
+			return inproxy.MarshalClientRelayedPacketResponse(&inproxy.ClientRelayedPacketResponse{})
+		})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Write(packet)
+	}))
+	defer server.Close()
+	spec := &parameters.InproxyBrokerSpec{BrokerPublicKey: publicKey.String(),
+		BrokerRootObfuscationSecret: secret.String(), BrokerFrontingSpecs: parameters.FrontingSpecs{
+			{FrontingProviderID: "AA", Addresses: []string{regexp.QuoteMeta(server.Listener.Addr().String())}, Host: "example.org", SkipVerify: true},
+		}}
+	m := newProviderTestManager(t, 1, spec)
+	err = setGateTestParameters(m.config, "", map[string]interface{}{
+		parameters.InproxyBrokerSpecs:                           parameters.InproxyBrokerSpecsValue{spec},
+		parameters.InproxyClientMaxBrokerClients:                1,
+		parameters.InproxyReplayBrokerDialParametersProbability: 0.0,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	acquire := func() (*InproxyBrokerClientInstance, *InproxyBrokerDialParameters) {
+		t.Helper()
+		client, dialParams, release, err := m.GetBrokerClient(ctx, "TEST")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(release)
+		return client.GetBrokerDialCoordinator().(*InproxyBrokerClientInstance), dialParams
+	}
+	timingFields := func(dialParams *InproxyBrokerDialParameters) (interface{}, interface{}) {
+		fields := dialParams.GetMetrics()
+		return fields["inproxy_broker_transport_dial_duration"], fields["inproxy_broker_session_handshake_duration"]
+	}
+
+	a, newParams := acquire()
+	if transport, session := timingFields(newParams); transport != nil || session != nil {
+		t.Fatalf("timings reported before establishment: %v %v", transport, session)
+	}
+
+	// One request makes two round trips: the handshake, then the request
+	// with the last handshake message.
+	_, err = a.brokerClient.ClientRelayedPacket(ctx, &inproxy.ClientRelayedPacketRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requestCount.Load() != 2 {
+		t.Fatalf("unexpected request count: %d", requestCount.Load())
+	}
+	timings := a.roundTripper.timings
+	transportDuration := time.Duration(timings.transportDialDuration.Load())
+	sessionDuration := time.Duration(timings.sessionHandshakeDuration.Load())
+	if transportDuration <= 0 || sessionDuration < handshakeDelay {
+		t.Fatalf("unexpected timings: transport %v session %v", transportDuration, sessionDuration)
+	}
+
+	// The copy made before establishment reads the timings when reporting.
+	transport, session := timingFields(newParams)
+	if transport != strconv.FormatInt(transportDuration.Milliseconds(), 10) ||
+		session != strconv.FormatInt(sessionDuration.Milliseconds(), 10) {
+		t.Fatalf("unexpected reported timings: %v %v", transport, session)
+	}
+
+	// A later request does not change the timings, and a reused copy
+	// reports the same values.
+	_, err = a.brokerClient.ClientRelayedPacket(ctx, &inproxy.ClientRelayedPacketRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if time.Duration(timings.transportDialDuration.Load()) != transportDuration ||
+		time.Duration(timings.sessionHandshakeDuration.Load()) != sessionDuration {
+		t.Fatal("timings changed after establishment")
+	}
+	reused, reusedParams := acquire()
+	if reused != a || !reusedParams.isReuse {
+		t.Fatal("broker client not reused")
+	}
+	if reusedTransport, reusedSession := timingFields(reusedParams); reusedTransport != transport || reusedSession != session {
+		t.Fatalf("reused copy timings: %v %v", reusedTransport, reusedSession)
 	}
 }
 
