@@ -812,12 +812,9 @@ type inproxyBrokerSelectionState struct {
 	reason string
 }
 
-// reset clears broker selection while retaining the random seed. It creates
-// new selection state, so broker clients created earlier no longer belong to
-// the current selection. For personal pairing clients and proxies,
-// matchesCurrentBrokerSelection rejects those clients: they cannot become
-// shared or count toward providers tried at the current broker, even if the
-// same broker is selected again.
+// reset clears broker selection while retaining the random seed, and
+// creates new selection state. Callers close all broker clients first, so
+// no client from before the reset remains to match the new selection.
 func (s *inproxyBrokerSelector) reset() {
 	s.commonCompartmentIDs, s.personalCompartmentIDs = nil, nil
 	s.brokers = nil
@@ -878,10 +875,24 @@ func (s *inproxyBrokerSelector) noMatch(broker *parameters.InproxyBrokerSpec) {
 }
 
 // matchesCurrentBrokerSelection reports whether the instance holds the
-// selector's current broker selection state. Selecting the same broker again
-// creates new state, so matching broker specs alone is insufficient. Common
-// pairing clients always return true because they select brokers independently
-// for each fronting provider.
+// selector's current broker selection state.
+//
+// For personal pairing clients and proxies, GetBrokerClient returns the
+// shared client, when there is one, without selecting a broker, so sharing
+// a client from an earlier selection would send new requests to a broker
+// that selection has left. Such clients remain when NoMatch failover
+// advances while other candidates at the previous broker are still live;
+// advancing after all providers are tried requires no live clients, and a
+// reset or return home closes all clients first. They still count toward
+// the client limit until released.
+//
+// Selecting the same broker again creates new state, so matching broker
+// specs alone is insufficient: a client left from an earlier selection of
+// the same broker, after the broker order wraps around, does not match, so
+// its late NoMatch cannot advance the current selection.
+//
+// Common pairing clients always return true because they select brokers
+// independently for each fronting provider.
 func (s *inproxyBrokerSelector) matchesCurrentBrokerSelection(instance *InproxyBrokerClientInstance) bool {
 	return !s.exhaustBrokerProviders || (s.currentBrokerSelection != nil && instance.brokerSelection == s.currentBrokerSelection)
 }
