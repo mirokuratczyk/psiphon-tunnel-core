@@ -342,7 +342,7 @@ func (b *BrokerClient) roundTrip(
 			// An established session stays valid for callers still using
 			// this BrokerClient, but is not carried over: a broker client
 			// acquired after this failure performs its own Noise handshake.
-			b.coordinator.BrokerClientRoundTripperFailed(roundTripper, failedError)
+			b.coordinator.BrokerClientRoundTripperFailed(roundTripper, err)
 		}
 
 		return nil, nil, errors.Trace(err)
