@@ -458,8 +458,6 @@ const (
 	InproxyProxyAnswerRequestTimeout                   = "InproxyProxyAnswerRequestTimeout"
 	InproxyClientOfferRequestTimeout                   = "InproxyClientOfferRequestTimeout"
 	InproxyClientOfferRequestPersonalTimeout           = "InproxyClientOfferRequestPersonalTimeout"
-	InproxyClientOfferRetryDelay                       = "InproxyClientOfferRetryDelay"
-	InproxyClientOfferRetryJitter                      = "InproxyClientOfferRetryJitter"
 	InproxyClientRelayedPacketRequestTimeout           = "InproxyClientRelayedPacketRequestTimeout"
 	InproxyClientDSLRequestTimeout                     = "InproxyClientDSLRequestTimeout"
 	InproxyClientMaxBrokerClients                      = "InproxyClientMaxBrokerClients"
@@ -622,6 +620,8 @@ const (
 	ReplayIgnoreChangedConfigState            = "ReplayIgnoreChangedConfigState"
 	DestinationBytesMetricsASN                = "DestinationBytesMetricsASN"
 	InproxyDTLSRandomizationProbability       = "InproxyDTLSRandomizationProbability"
+	InproxyClientOfferRetryDelay              = "InproxyClientOfferRetryDelay"
+	InproxyClientOfferRetryJitter             = "InproxyClientOfferRetryJitter"
 )
 
 const (
