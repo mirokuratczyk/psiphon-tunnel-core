@@ -696,7 +696,9 @@ type Config struct {
 
 	// InproxyProxySessionPrivateKey specifies a long-term in-proxy proxy
 	// private key and corresponding, derived proxy ID to use. If blank, an
-	// ephemeral key will be generated.
+	// ephemeral key is generated and used for the lifetime of the
+	// controller, including across network changes and broker client
+	// resets, so that concurrent broker clients present one proxy ID.
 	InproxyProxySessionPrivateKey string `json:",omitempty"`
 
 	// InproxyProxySplitUpstreamInterfaceName specifies a network interface
