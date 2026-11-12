@@ -193,12 +193,15 @@ type DialParameters struct {
 
 	inproxyDialInitialized         bool                         `json:"-"`
 	inproxyBrokerClientManager     *InproxyBrokerClientManager  `json:"-"`
-	inproxyBrokerDialParameters    *InproxyBrokerDialParameters `json:"-"`
 	inproxyPackedSignedServerEntry []byte                       `json:"-"`
 	inproxyNATStateManager         *InproxyNATStateManager      `json:"-"`
 	InproxySTUNDialParameters      *InproxySTUNDialParameters   `json:",omitempty"`
 	InproxyWebRTCDialParameters    *InproxyWebRTCDialParameters `json:",omitempty"`
 	inproxyConn                    atomic.Value                 `json:"-"` // *inproxyBrokerOwnedConn
+
+	// inproxyBrokerDialParameters is stored by dialInproxy, which may run on
+	// a meek http.Transport dial goroutine concurrently with metrics reads.
+	inproxyBrokerDialParameters atomic.Pointer[InproxyBrokerDialParameters] `json:"-"`
 
 	TunnelLightProxyID string `json:"-"`
 
@@ -2019,8 +2022,8 @@ func (dialParams *DialParameters) GetInproxyMetrics() common.LogFields {
 		return inproxyMetrics
 	}
 
-	if dialParams.inproxyBrokerDialParameters != nil {
-		inproxyMetrics.Add(dialParams.inproxyBrokerDialParameters.GetMetrics())
+	if brokerDialParams := dialParams.inproxyBrokerDialParameters.Load(); brokerDialParams != nil {
+		inproxyMetrics.Add(brokerDialParams.GetMetrics())
 	}
 	inproxyMetrics.Add(dialParams.InproxySTUNDialParameters.GetMetrics())
 	inproxyMetrics.Add(dialParams.InproxyWebRTCDialParameters.GetMetrics())

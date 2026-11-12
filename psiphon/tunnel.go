@@ -1753,7 +1753,7 @@ func dialInproxy(
 	}()
 
 	// Record the dial params used by this attempt for tunnel metrics.
-	dialParams.inproxyBrokerDialParameters = brokerDialParams
+	dialParams.inproxyBrokerDialParameters.Store(brokerDialParams)
 
 	clientConfig := &inproxy.ClientConfig{
 		Logger:                       NoticeCommonLogger(debugLogging),

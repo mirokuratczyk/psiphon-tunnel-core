@@ -2999,7 +2999,7 @@ func TestInproxyMetricsBeforeBrokerAcquisition(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer release()
-	params.inproxyBrokerDialParameters = snapshot
+	params.inproxyBrokerDialParameters.Store(snapshot)
 	if params.GetInproxyMetrics()["inproxy_broker_is_reuse"] != "0" {
 		t.Fatal("missing broker metrics after acquisition")
 	}
@@ -3446,13 +3446,66 @@ func TestInproxyDialLocalFailureCleanup(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			conn, err := dialInproxy(ctx, m.config, params)
-			if conn != nil || err == nil || !strings.Contains(err.Error(), "no compartment IDs") || params.inproxyBrokerDialParameters == nil || len(m.clients) != wantCount {
+			if conn != nil || err == nil || !strings.Contains(err.Error(), "no compartment IDs") || params.inproxyBrokerDialParameters.Load() == nil || len(m.clients) != wantCount {
 				t.Fatalf("local failure leaked broker lease: %v", err)
 			}
 			if shared && (m.sharedClient != existing || m.clients[existing].refs != 1) {
 				t.Fatal("local failure disturbed shared lease")
 			}
 		})
+	}
+}
+
+// TestInproxyDialBrokerParametersConcurrentRead verifies that
+// GetInproxyMetrics may run while dialInproxy records the acquired broker
+// dial parameters. A plain HTTP meek second hop dials in-proxy on an
+// http.Transport goroutine, which can overlap failure-path metrics reads.
+// Run with -race.
+func TestInproxyDialBrokerParametersConcurrentRead(t *testing.T) {
+	m := newGateTestManager(t)
+	if err := setGateTestParameters(m.config, "local", map[string]interface{}{
+		parameters.InproxyClientDiscoverNATProbability: 0.0,
+		parameters.InproxyCommonCompartmentIDs:         parameters.InproxyCompartmentIDsValue{},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	existing := getGateTestClient(t, m)
+	existing.brokerResponseSucceededForTest(existing.roundTripper)
+	tunnelProtocol := protocol.TunnelProtocolPlusInproxyWebRTC(protocol.TUNNEL_PROTOCOL_OBFUSCATED_SSH)
+	params := &DialParameters{
+		NetworkID:      "TEST",
+		TunnelProtocol: tunnelProtocol,
+		ServerEntry: &protocol.ServerEntry{
+			IpAddress:       "127.0.0.1",
+			InproxyOSSHPort: 4000,
+			Capabilities:    []string{protocol.GetCapability(tunnelProtocol)},
+		},
+		inproxyBrokerClientManager:  m,
+		inproxyDialInitialized:      true,
+		InproxySTUNDialParameters:   &InproxySTUNDialParameters{},
+		InproxyWebRTCDialParameters: &InproxyWebRTCDialParameters{},
+	}
+	params.InproxySTUNDialParameters.STUNServerResolvedIPAddress.Store("")
+	params.InproxySTUNDialParameters.STUNServerRFC5780ResolvedIPAddress.Store("")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 20; i++ {
+			_, _ = dialInproxy(ctx, m.config, params)
+		}
+	}()
+	for {
+		_ = params.GetInproxyMetrics()
+		select {
+		case <-done:
+			if params.GetInproxyMetrics()["inproxy_broker_is_reuse"] != "1" {
+				t.Fatal("missing broker metrics after dial")
+			}
+			return
+		default:
+		}
 	}
 }
 
