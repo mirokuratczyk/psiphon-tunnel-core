@@ -198,13 +198,14 @@ type BrokerDialCoordinator interface {
 	// the failure is likely transient.
 	//
 	// In-flight requests on the same BrokerClient may still be using the
-	// RoundTripper, and BrokerClientRoundTripper must keep returning it.
-	// The provider must not close the RoundTripper or substitute another
-	// one while callers hold this BrokerClient. To move to a different
-	// broker or dial parameters, the provider stops sharing this
+	// RoundTripper, so in response to this signal the provider must not
+	// close the RoundTripper or substitute another one. To move to a
+	// different broker or dial parameters, the provider stops sharing this
 	// BrokerClient, so that new callers obtain a different BrokerClient
 	// with its own RoundTripper while existing callers continue to use this
-	// one.
+	// one. The provider may still close the RoundTripper while callers hold
+	// this BrokerClient for other reasons, such as a network change or
+	// shutdown, which fails their in-flight requests.
 	BrokerClientRoundTripperFailed(roundTripper RoundTripper, err error)
 
 	// BrokerClientResponseReceived is called after a broker response is
