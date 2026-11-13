@@ -2555,11 +2555,14 @@ func (config *Config) IsInproxyProxyPersonalPairingMode() bool {
 // functionality -- onInproxyMustUpgrade initiates a shutdown after emitting
 // the InproxyMustUpgrade notice.
 //
-// Otherwise, the client stops selecting in-proxy tunnel protocols for the
-// remainder of the controller run, and continues with other tunnel
-// protocols; see protocolSelectionConstraints.selectProtocol. The
-// InproxyMustUpgrade notice is not emitted, as it indicates an impending
-// shutdown.
+// Otherwise, the client logs a diagnostic warning, stops selecting in-proxy
+// tunnel protocols for the remainder of the controller run, and continues
+// with other tunnel protocols; see protocolSelectionConstraints.selectProtocol,
+// which instead shuts down when the protocol limits allow only in-proxy
+// tunnel protocols. The InproxyMustUpgrade notice indicates an impending
+// shutdown and is not emitted. A client limited to in-proxy tunnel protocols
+// also shuts down without it, as common pairing clients are not expected to
+// be limited that way.
 func (config *Config) OnInproxyMustUpgrade() {
 	first := atomic.CompareAndSwapInt32(&config.inproxyMustUpgrade, 0, 1)
 

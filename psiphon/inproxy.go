@@ -476,6 +476,9 @@ func (b *InproxyBrokerClientManager) expireSharedClientLocked(instance *InproxyB
 	}
 	// Unlike a failure, idle expiry does not delete the stored replay dial
 	// parameters, and sharedLost allows the provider to be replayed again.
+	// For a personal pairing client whose shared client never received a
+	// broker response, the provider also remains tried at the current broker
+	// selection; see sharedLost.
 	responded := entry.responded
 	b.closeClientLocked(instance, "idle timeout")
 	b.selector.sharedLost(responded)
@@ -565,6 +568,14 @@ func (b *InproxyBrokerClientManager) clientResponseReceived(
 // clientResponseReceived. A later decoded response that is not a retryable
 // no match leaves the existing shared client unchanged. A retryable no match
 // still applies the failover policy and may close it.
+//
+// TODO: unshare a client shared on transport that has never received a broker
+// response when a request fails without a RoundTripperFailedError? A non-200
+// response from the CDN after InproxyBrokerRoundTripStatusCodeFailureThreshold
+// is deliberately not a transport failure, as it is often a CDN timeout on a
+// long-poll to a working broker; see InproxyBrokerRoundTripper.RoundTrip. A
+// client shared on transport alone then stays shared even when the broker
+// behind the CDN is not responding.
 func (b *InproxyBrokerClientManager) clientTransportEstablished(
 	instance *InproxyBrokerClientInstance) {
 	b.mutex.Lock()
@@ -1041,10 +1052,12 @@ func (s *inproxyBrokerSelector) selectClient(config *Config, p parameters.Parame
 	if s.exhaustBrokerProviders {
 		visit := s.currentBrokerSelection
 
-		// Shared client loss clears the provider order and tried
-		// providers but retains the selection, so both are rebuilt from
-		// the clients that remain tracked. Clients from earlier
-		// selections occupy capacity but cannot delay this one.
+		// Shared client loss clears the provider order, and the tried
+		// providers when the lost client received a broker response, but
+		// retains the selection. The provider order is rebuilt, and the
+		// providers of the clients that remain tracked at this selection
+		// are added to the tried providers. Clients from earlier selections
+		// occupy capacity but cannot delay this one.
 		if visit.spec != nil {
 			s.initializeProviders(parameters.InproxyBrokerSpecsValue{visit.spec})
 		}
@@ -1079,8 +1092,11 @@ func (s *inproxyBrokerSelector) selectClient(config *Config, p parameters.Parame
 				// every advance both leaves and arrives, never
 				// marks the proxy as away.
 				//
-				// TODO: jitter the return period, drawn once
-				// per departure?
+				// TODO: add jitter to the return period? A
+				// proxy currently returns to the first
+				// rendezvous broker exactly
+				// InproxyProxyPersonalReturnHomePeriod after
+				// moving on to the next broker.
 				switch {
 				case (visit.index+1)%len(s.brokers) == 0:
 					s.awayFromHomeSince = time.Time{}
@@ -2612,6 +2628,12 @@ func (rt *InproxyBrokerRoundTripper) RoundTrip(
 	// acquisition would reuse it before broker selection ran, and the
 	// client would never try another provider or broker; treating it as
 	// a failure is what unshares the client and lets selection move on.
+	//
+	// TODO: classify a caller deadline as a failure only after a minimum
+	// request duration? A tunnel dial that waited for a broker client
+	// starts its request with the remainder of its dial budget, and a
+	// deadline that ends such a request early unshares a working client
+	// and may delete its replay record.
 	//
 	// Close cancels rt.runCtx synchronously and then closes the MeekConn,
 	// but the merged ctx is cancelled from rt.runCtx asynchronously, so a

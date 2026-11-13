@@ -7345,9 +7345,10 @@ func TestInproxyProxyPersonalReturnHome(t *testing.T) {
 			t.Fatalf("wrap to the first broker did not end the interval: index %d", home.brokerSelection.index)
 		}
 		home.brokerResponseSucceededForTest(home.roundTripper)
-		// Even a long-elapsed departure time cannot fire a return at
-		// home, since arrival cleared it; simulate a stale value to be
-		// sure returnHomeDue is false while the interval is unset.
+		// Even a long time away from the first broker cannot trigger a
+		// return while the proxy is there, since arriving cleared it;
+		// set a stale value to check that returnHomeDue is false while
+		// the interval is unset.
 		m.mutex.Lock()
 		due := m.selector.returnHomeDue()
 		m.mutex.Unlock()

@@ -110,8 +110,9 @@ type ClientConfig struct {
 	// restarting the client.
 	//
 	// In Psiphon, a client in common pairing mode that is not also running a
-	// proxy does not stop or prompt; it continues without in-proxy tunnel
-	// protocols, as other tunnel protocols remain available.
+	// proxy emits no upgrade notice; it continues without in-proxy tunnel
+	// protocols when its protocol limits allow other tunnel protocols, and
+	// otherwise shuts down.
 	MustUpgrade func()
 }
 
