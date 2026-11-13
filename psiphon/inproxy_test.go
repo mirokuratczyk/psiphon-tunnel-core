@@ -6657,6 +6657,78 @@ func TestInproxyBrokerPersonalReplayPreservesProviderExhaustion(t *testing.T) {
 	}
 }
 
+// TestInproxyBrokerTransportSharedLossAdvances verifies that a personal
+// pairing client, a personal pairing proxy and a common proxy leave a broker
+// whose transport is established but whose requests fail, with transport
+// sharing on or off. With domain fronting, transport establishment ends at
+// the CDN and does not show that the broker works, so losing a client shared
+// on that basis must not restart the search of the broker's providers.
+func TestInproxyBrokerTransportSharedLossAdvances(t *testing.T) {
+	for _, mode := range []string{"personal-client", "personal-proxy", "common-proxy"} {
+		for _, share := range []float64{0.0, 1.0} {
+			for _, limit := range []int{1, 2} {
+				t.Run(fmt.Sprintf("%s-%v-%d", mode, share, limit), func(t *testing.T) {
+					specs := []*parameters.InproxyBrokerSpec{
+						newProviderTestBroker(t, "A", "B"), newProviderTestBroker(t, "A", "B")}
+					m := newProviderTestManager(t, limit, specs...)
+					m.config.DisableReplay = true
+					id, err := inproxy.MakeID()
+					if err != nil {
+						t.Fatal(err)
+					}
+					switch mode {
+					case "personal-client":
+						m.config.InproxyClientPersonalCompartmentID = id.String()
+					case "personal-proxy":
+						m.isProxy = true
+						m.config.InproxyProxyPersonalCompartmentID = id.String()
+					case "common-proxy":
+						m.isProxy = true
+					}
+					if err := setGateTestParameters(m.config, "transport-shared-loss", map[string]interface{}{
+						parameters.InproxyBrokerSpecs:                                 parameters.InproxyBrokerSpecsValue(specs),
+						parameters.InproxyClientMaxBrokerClients:                      limit,
+						parameters.InproxyProxyMaxBrokerClients:                       limit,
+						parameters.InproxyPersonalPairingMaxBrokerSpecCount:           2,
+						parameters.InproxyClientShareBrokerClientTransportProbability: share,
+						parameters.InproxyProxyShareBrokerClientTransportProbability:  share,
+					}); err != nil {
+						t.Fatal(err)
+					}
+
+					// Each attempt establishes the transport, which shares the
+					// client when transport sharing is on, and then fails its
+					// first request. The broker has two providers, so the
+					// third attempt must be at the other broker.
+					firstBroker := ""
+					for attempt := 0; ; attempt++ {
+						var release func()
+						c := getGateTestClient(t, m, &release)
+						broker := c.brokerDialParams.brokerSpec.BrokerPublicKey
+						if firstBroker == "" {
+							firstBroker = broker
+						}
+						if broker != firstBroker {
+							break
+						}
+						if attempt == 2 {
+							t.Fatal("selection did not leave the failing broker")
+						}
+						if share > 0 {
+							if c.roundTripper.transportEstablished == nil {
+								t.Fatal("transport sharing not wired")
+							}
+							c.roundTripper.transportEstablished()
+						}
+						c.BrokerClientRoundTripperFailed(c.roundTripper, testRoundTripFailure)
+						release()
+					}
+				})
+			}
+		}
+	}
+}
+
 // newPersonalRaceTestManager builds a personal pairing client manager with
 // the given client limit and personal NoMatch failover probability.
 func newPersonalRaceTestManager(t *testing.T, limit int, probability float64, specs ...*parameters.InproxyBrokerSpec) *InproxyBrokerClientManager {
@@ -7544,7 +7616,7 @@ func settleSupplySimProxy(
 	p := m.config.GetParameters().Get()
 	defer p.Close()
 	if proxy.broker != "" {
-		proxy.selector.sharedLost()
+		proxy.selector.sharedLost(true)
 		proxy.broker = ""
 	}
 	for proxy.attempts = 0; proxy.attempts < maxAttempts; proxy.attempts++ {

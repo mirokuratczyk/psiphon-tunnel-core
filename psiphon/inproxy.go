@@ -250,7 +250,7 @@ func (b *InproxyBrokerClientManager) brokerClientFailed(
 	if wasShared {
 		b.stopSharedIdleTimerLocked()
 		b.sharedClient = nil
-		b.selector.sharedLost()
+		b.selector.sharedLost(entry.responded)
 		for candidate, candidateEntry := range b.clients {
 			if candidateEntry.failed || !candidateEntry.succeeded ||
 				!b.selector.matchesCurrentBrokerSelection(candidate) {
@@ -412,6 +412,10 @@ type inproxyBrokerClientEntry struct {
 	// Set after an eligible response or, when transport sharing is enabled,
 	// successful transport establishment.
 	succeeded bool
+	// Set after an eligible response only. With domain fronting, transport
+	// establishment ends at the CDN, so only a response shows that the
+	// broker works; see inproxyBrokerSelector.sharedLost.
+	responded bool
 }
 
 func (b *InproxyBrokerClientManager) stopSharedIdleTimerLocked() {
@@ -465,8 +469,9 @@ func (b *InproxyBrokerClientManager) expireSharedClientLocked(instance *InproxyB
 	}
 	// Unlike a failure, idle expiry does not delete the stored replay dial
 	// parameters, and sharedLost allows the provider to be replayed again.
+	responded := entry.responded
 	b.closeClientLocked(instance, "idle timeout")
-	b.selector.sharedLost()
+	b.selector.sharedLost(responded)
 }
 
 // closeClientLocked removes and closes a client, even if it is still in use.
@@ -534,6 +539,7 @@ func (b *InproxyBrokerClientManager) clientResponseReceived(
 		}
 	}
 	b.clients[instance].succeeded = true
+	b.clients[instance].responded = true
 	if b.sharedClient != nil {
 		return
 	}
@@ -831,17 +837,23 @@ func (s *inproxyBrokerSelector) reset() {
 // expires: provider order is rebuilt and replayedByProvider is cleared, so
 // the lost client's provider may be replayed again, while broker positions
 // and the random seed are kept. Personal pairing clients and proxies keep
-// their current broker and selection state pointer, with its tried
-// providers cleared so the next selection rebuilds them from the clients
-// still tracked: the lost client was proven at that broker, surviving
-// candidates there can still become shared, and a personal pairing client
-// that left would have to re-walk every broker between the first in
-// rendezvous order and the one where its proxy is.
-func (s *inproxyBrokerSelector) sharedLost() {
+// their current broker and selection state pointer. When responded is set,
+// the lost client received a broker response, which shows that the broker
+// works: its tried providers are cleared so the next selection rebuilds them
+// from the clients still tracked, surviving candidates there can still
+// become shared, and a personal pairing client that left would have to
+// re-walk every broker between the first in rendezvous order and the one
+// where its proxy is.
+//
+// A client shared on transport establishment alone has not shown that: with
+// domain fronting the transport ends at the CDN, which is reachable even when
+// the broker is not. Its tried providers are kept, so that repeated losses at
+// a broker that never responds exhaust its providers and advance selection.
+func (s *inproxyBrokerSelector) sharedLost(responded bool) {
 	s.providers, s.replayedByProvider = nil, nil
 	s.nextProvider = 0
 	s.preferBrokerOrder, s.noMatchBroker = false, nil
-	if s.exhaustBrokerProviders {
+	if s.exhaustBrokerProviders && responded {
 		s.currentBrokerSelection.tried = nil
 	}
 }
