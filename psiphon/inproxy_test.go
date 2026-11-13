@@ -3526,7 +3526,8 @@ func TestInproxyDialBrokerParametersConcurrentRead(t *testing.T) {
 // is recorded against the server entry and its replay is not cleared. A
 // local failure after acquisition remains attributable. Both acquisition
 // failure causes are covered: the caller's deadline expiring while parked
-// at the client limit, and no broker specs.
+// at the client limit, which also clears broker dial parameters recorded by
+// an earlier attempt, and no broker specs.
 func TestInproxyDialBrokerAcquireFailureNotAttributed(t *testing.T) {
 	newParams := func(m *InproxyBrokerClientManager) *DialParameters {
 		return &DialParameters{NetworkID: "TEST", TunnelProtocol: protocol.TunnelProtocolPlusInproxyWebRTC(protocol.TUNNEL_PROTOCOL_OBFUSCATED_SSH),
@@ -3561,7 +3562,11 @@ func TestInproxyDialBrokerAcquireFailureNotAttributed(t *testing.T) {
 		getGateTestClient(t, m)
 		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 		defer cancel()
-		conn, err := dialInproxy(ctx, m.config, newParams(m))
+		// Broker dial parameters recorded by an earlier attempt, such as a
+		// meek redial, are cleared rather than reported for this attempt.
+		params := newParams(m)
+		params.inproxyBrokerDialParameters.Store(&InproxyBrokerDialParameters{brokerClientID: "earlier"})
+		conn, err := dialInproxy(ctx, m.config, params)
 		if conn != nil {
 			t.Fatal("unexpected conn")
 		}
@@ -3571,6 +3576,9 @@ func TestInproxyDialBrokerAcquireFailureNotAttributed(t *testing.T) {
 		check(t, err, true)
 		if len(m.clients) != 1 {
 			t.Fatal("parked dial created or leaked a client")
+		}
+		if params.inproxyBrokerDialParameters.Load() != nil {
+			t.Fatal("earlier attempt's broker dial parameters retained")
 		}
 	})
 

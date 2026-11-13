@@ -1680,6 +1680,12 @@ func dialInproxy(
 		}
 	}()
 
+	// Clear any broker dial parameters recorded by an earlier dial attempt
+	// using these dial parameters, such as a meek redial, so that the
+	// metrics of an attempt that fails before acquiring a broker client do
+	// not name the earlier attempt's broker client.
+	dialParams.inproxyBrokerDialParameters.Store(nil)
+
 	isProxy := false
 	webRTCDialInstance, err := NewInproxyWebRTCDialInstance(
 		config,
