@@ -1364,12 +1364,12 @@ func TestCanDefer(t *testing.T) {
 }
 
 // TestInproxyMustUpgradeProtocolSelection verifies that, after a broker
-// returns MustUpgrade, a common client emits one InproxyMustUpgrade notice
-// and stops selecting in-proxy tunnel protocols without shutting down; that
+// returns MustUpgrade, a common client stops selecting in-proxy tunnel
+// protocols without emitting InproxyMustUpgrade or shutting down; that
 // fallback consumes no in-proxy dial rate limiter token; the initial limit
-// phase cannot stall; new establishments prune mixed limits; and that a client
-// limited to in-proxy tunnel protocols shuts down, as do a proxy and a
-// personal pairing client.
+// phase cannot stall; new establishments prune mixed limits; that a client
+// limited to in-proxy tunnel protocols shuts down without the notice; and
+// that a proxy and a personal pairing client emit one notice and shut down.
 func TestInproxyMustUpgradeProtocolSelection(t *testing.T) {
 
 	var notices bytes.Buffer
@@ -1408,10 +1408,14 @@ func TestInproxyMustUpgradeProtocolSelection(t *testing.T) {
 		t.Fatalf("unexpected selection before MustUpgrade: %s", selected)
 	}
 
+	mustUpgradeNotices := func() int {
+		return bytes.Count(notices.Bytes(), []byte(`"InproxyMustUpgrade"`))
+	}
+
 	constraints.config.OnInproxyMustUpgrade()
 	constraints.config.OnInproxyMustUpgrade()
-	if count := bytes.Count(notices.Bytes(), []byte(`"InproxyMustUpgrade"`)); count != 1 {
-		t.Fatalf("unexpected InproxyMustUpgrade notice count: %d", count)
+	if mustUpgradeNotices() != 0 {
+		t.Fatal("common client emitted InproxyMustUpgrade")
 	}
 	if signals != 0 {
 		t.Fatal("common client shut down on MustUpgrade")
@@ -1505,16 +1509,22 @@ func TestInproxyMustUpgradeProtocolSelection(t *testing.T) {
 	if ok || signals == 0 {
 		t.Fatal("client limited to in-proxy tunnel protocols did not shut down")
 	}
+	if mustUpgradeNotices() != 0 {
+		t.Fatal("client limited to in-proxy tunnel protocols emitted InproxyMustUpgrade")
+	}
 
-	// A proxy, or a personal pairing client, shuts down on MustUpgrade.
-	for _, config := range []*Config{
+	// A proxy, or a personal pairing client, emits one InproxyMustUpgrade
+	// notice and shuts down on MustUpgrade.
+	for i, config := range []*Config{
 		{InproxyEnableProxy: true},
 		{InproxyClientPersonalCompartmentID: "personal"},
 	} {
 		configSignals := 0
-		newConstraints(config, &configSignals).config.OnInproxyMustUpgrade()
-		if configSignals != 1 {
-			t.Fatal("proxy or personal pairing client did not shut down on MustUpgrade")
+		configConstraints := newConstraints(config, &configSignals)
+		configConstraints.config.OnInproxyMustUpgrade()
+		configConstraints.config.OnInproxyMustUpgrade()
+		if configSignals != 2 || mustUpgradeNotices() != i+1 {
+			t.Fatal("proxy or personal pairing client did not notify and shut down on MustUpgrade")
 		}
 	}
 

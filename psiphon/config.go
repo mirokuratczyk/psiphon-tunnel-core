@@ -2550,21 +2550,29 @@ func (config *Config) IsInproxyProxyPersonalPairingMode() bool {
 }
 
 // OnInproxyMustUpgrade is invoked when the in-proxy broker returns the
-// MustUpgrade response, and emits the InproxyMustUpgrade notice once.
+// MustUpgrade response. When either running a proxy, or when running a
+// client in personal-pairing mode -- two states that require in-proxy
+// functionality -- onInproxyMustUpgrade initiates a shutdown after emitting
+// the InproxyMustUpgrade notice.
 //
-// When either running a proxy, or when running a client in personal-pairing
-// mode -- two states that require in-proxy functionality --
-// OnInproxyMustUpgrade also initiates a shutdown. Otherwise, the client
-// stops selecting in-proxy tunnel protocols for the remainder of the
-// controller run, and shuts down if its protocol limits allow only in-proxy
-// tunnel protocols; see protocolSelectionConstraints.selectProtocol.
+// Otherwise, the client stops selecting in-proxy tunnel protocols for the
+// remainder of the controller run, and continues with other tunnel
+// protocols; see protocolSelectionConstraints.selectProtocol. The
+// InproxyMustUpgrade notice is not emitted, as it indicates an impending
+// shutdown.
 func (config *Config) OnInproxyMustUpgrade() {
-	if atomic.CompareAndSwapInt32(&config.inproxyMustUpgrade, 0, 1) {
-		NoticeInproxyMustUpgrade()
-	}
+	first := atomic.CompareAndSwapInt32(&config.inproxyMustUpgrade, 0, 1)
 
 	if config.InproxyEnableProxy || config.IsInproxyClientPersonalPairingMode() {
+		if first {
+			NoticeInproxyMustUpgrade()
+		}
 		config.signalComponentFailure.Load().(func())()
+		return
+	}
+
+	if first {
+		NoticeWarning("in-proxy must upgrade: in-proxy tunnel protocols disabled")
 	}
 }
 
