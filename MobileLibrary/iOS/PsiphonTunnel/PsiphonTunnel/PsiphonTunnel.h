@@ -317,11 +317,12 @@ WWAN or vice versa or VPN state changed
 - (void)onApplicationParameters:(NSDictionary * _Nonnull)parameters;
 
 /*!
-Called when tunnel-core reports that a selected in-proxy mode -- including
-running a proxy; or running a client in personal pairing mode -- cannot
-function without an app upgrade. The receiver should alert the user to
-upgrade the app and/or disable the unsupported mode(s). This callback is
-followed by a tunnel-core shutdown.
+Called when tunnel-core reports that in-proxy functionality cannot be used
+without an app upgrade. The receiver should alert the user to upgrade the app
+and/or disable the unsupported mode(s). This callback is followed by a
+tunnel-core shutdown when running a proxy; running a client in personal
+pairing mode; or running a client limited to in-proxy tunnel protocols.
+Otherwise, the client continues without in-proxy tunnel protocols.
  */
 - (void)onInproxyMustUpgrade;
 

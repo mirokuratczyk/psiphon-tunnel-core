@@ -1166,12 +1166,13 @@ func NoticeSkipServerEntry(format string, args ...interface{}) {
 }
 
 // NoticeInproxyMustUpgrade reports that an in-proxy component requires an app
-// upgrade. Currently this includes running a proxy; and running a client in
-// personal pairing mode. The receiver should alert the user to upgrade the
-// app.
+// upgrade. The receiver should alert the user to upgrade the app.
 //
-// There is at most one InproxyMustUpgrade notice emitted per controller run,
-// and an InproxyMustUpgrade notice is followed by a tunnel-core shutdown.
+// There is at most one InproxyMustUpgrade notice emitted per controller run.
+// The notice is followed by a tunnel-core shutdown when running a proxy;
+// running a client in personal pairing mode; or running a client with
+// protocol limits that allow only in-proxy tunnel protocols. Otherwise, the
+// client continues without in-proxy tunnel protocols.
 func NoticeInproxyMustUpgrade() {
 	singletonNoticeLogger.outputNotice(
 		"InproxyMustUpgrade", 0)

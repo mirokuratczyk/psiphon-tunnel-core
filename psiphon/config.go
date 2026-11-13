@@ -1447,7 +1447,7 @@ type Config struct {
 
 	signalComponentFailure atomic.Value
 
-	inproxyMustUpgradePosted int32
+	inproxyMustUpgrade int32
 
 	serverEntryIterationMetricsUpdater atomic.Value
 
@@ -2550,21 +2550,28 @@ func (config *Config) IsInproxyProxyPersonalPairingMode() bool {
 }
 
 // OnInproxyMustUpgrade is invoked when the in-proxy broker returns the
-// MustUpgrade response. When either running a proxy, or when running a
-// client in personal-pairing mode -- two states that require in-proxy
-// functionality -- onInproxyMustUpgrade initiates a shutdown after emitting
-// the InproxyMustUpgrade notice.
+// MustUpgrade response, and emits the InproxyMustUpgrade notice once.
+//
+// When either running a proxy, or when running a client in personal-pairing
+// mode -- two states that require in-proxy functionality --
+// OnInproxyMustUpgrade also initiates a shutdown. Otherwise, the client
+// stops selecting in-proxy tunnel protocols for the remainder of the
+// controller run, and shuts down if its protocol limits allow only in-proxy
+// tunnel protocols; see protocolSelectionConstraints.selectProtocol.
 func (config *Config) OnInproxyMustUpgrade() {
-	// TODO: check if LimitTunnelProtocols is set to allow only INPROXY tunnel
-	// protocols; this is another case where in-proxy functionality is
-	// required.
+	if atomic.CompareAndSwapInt32(&config.inproxyMustUpgrade, 0, 1) {
+		NoticeInproxyMustUpgrade()
+	}
 
 	if config.InproxyEnableProxy || config.IsInproxyClientPersonalPairingMode() {
-		if atomic.CompareAndSwapInt32(&config.inproxyMustUpgradePosted, 0, 1) {
-			NoticeInproxyMustUpgrade()
-		}
 		config.signalComponentFailure.Load().(func())()
 	}
+}
+
+// isInproxyMustUpgrade indicates whether an in-proxy broker has returned the
+// MustUpgrade response.
+func (config *Config) isInproxyMustUpgrade() bool {
+	return atomic.LoadInt32(&config.inproxyMustUpgrade) == 1
 }
 
 func (config *Config) SetServerEntryIterationMetricsUpdater(

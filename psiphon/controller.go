@@ -2355,6 +2355,36 @@ func (p *protocolSelectionConstraints) canDefer(
 	return len(deferredProtocols) > 0
 }
 
+// pruneInproxyLimitsAfterMustUpgrade removes in-proxy tunnel protocols from
+// the protocol limits of a new establishment after a broker has returned
+// MustUpgrade. The initial limit phase then does not dial them again, and is
+// skipped when no protocols remain; and candidate and egress region counts,
+// which use the limits directly, exclude server entries reachable only
+// through in-proxy tunnel protocols. A limit allowing only in-proxy tunnel
+// protocols is retained, so that selectProtocol shuts down. See the
+// MustUpgrade comment in selectProtocol.
+func (p *protocolSelectionConstraints) pruneInproxyLimitsAfterMustUpgrade() {
+
+	if !p.config.isInproxyMustUpgrade() {
+		return
+	}
+
+	if len(p.initialLimitTunnelProtocols) > 0 {
+
+		p.initialLimitTunnelProtocols = p.initialLimitTunnelProtocols.PruneInproxyTunnelProtocols()
+
+		if len(p.initialLimitTunnelProtocols) == 0 {
+			p.initialLimitTunnelProtocolsCandidateCount = 0
+		}
+	}
+
+	if len(p.limitTunnelProtocols) > 0 &&
+		!p.limitTunnelProtocols.IsOnlyInproxyTunnelProtocols() {
+
+		p.limitTunnelProtocols = p.limitTunnelProtocols.PruneInproxyTunnelProtocols()
+	}
+}
+
 func (p *protocolSelectionConstraints) getLimitTunnelProtocols(
 	connectTunnelCount int) protocol.TunnelProtocols {
 
@@ -2392,6 +2422,46 @@ func (p *protocolSelectionConstraints) selectProtocol(
 
 	candidateProtocols := p.supportedProtocols(
 		connectTunnelCount, excludeIntensive, serverEntry)
+
+	// After a broker returns MustUpgrade, in-proxy dials cannot succeed until
+	// the app is upgraded, so in-proxy tunnel protocols are no longer
+	// selected. When the protocol limits allow only in-proxy tunnel
+	// protocols, no protocol can be selected, so shut down, as is done in
+	// personal pairing mode. The limits are checked by protocol name: a limit
+	// whose other protocols are all unavailable, for example disabled, does
+	// not cause a shutdown. The length check is required as
+	// IsOnlyInproxyTunnelProtocols is true for an empty list, which applies
+	// no limit.
+	//
+	// In the initial limit phase, in-proxy tunnel protocols are retained when
+	// no other protocol remains for the candidate. The phase ends only after
+	// InitialLimitTunnelProtocolsCandidateCount selections, so skipping such
+	// candidates could leave establishment in the phase indefinitely; the
+	// count bounds these dials. An establishment that starts after
+	// MustUpgrade removes in-proxy tunnel protocols from the limits instead;
+	// see pruneInproxyLimitsAfterMustUpgrade.
+
+	if p.config.isInproxyMustUpgrade() {
+
+		if len(p.limitTunnelProtocols) > 0 &&
+			p.limitTunnelProtocols.IsOnlyInproxyTunnelProtocols() {
+
+			// Concurrent establishment workers may each signal before the
+			// shutdown stops them; only the first signal takes effect.
+			NoticeWarning(
+				"in-proxy must upgrade: limits allow only in-proxy tunnel protocols")
+			p.config.signalComponentFailure.Load().(func())()
+			return "", 0, false
+		}
+
+		isInitialLimitPhase := p.hasInitialProtocols() &&
+			connectTunnelCount < p.initialLimitTunnelProtocolsCandidateCount
+
+		prunedProtocols := candidateProtocols.PruneInproxyTunnelProtocols()
+		if len(prunedProtocols) > 0 || !isInitialLimitPhase {
+			candidateProtocols = prunedProtocols
+		}
+	}
 
 	// Prefer selecting an in-proxy tunnel protocol when indicated, but fall
 	// back to other protocols when no in-proxy protocol is supported.
@@ -2751,6 +2821,8 @@ func (controller *Controller) launchEstablishing() {
 				protocol.InproxyTunnelProtocols
 		}
 	}
+
+	controller.protocolSelectionConstraints.pruneInproxyLimitsAfterMustUpgrade()
 
 	// Initialize the in-proxy client dial rate limiter, using the latest
 	// tactics. Rate limits are used in
@@ -3616,9 +3688,11 @@ loop:
 			//
 			// Forced selection is skipped when excluding intensive protocols, as
 			// TunnelProtocolIsResourceIntensive currently includes
-			// TunnelProtocolUsesInproxy.
+			// TunnelProtocolUsesInproxy; and after a broker has returned
+			// MustUpgrade, as in-proxy tunnel protocols are no longer selected.
 
 			if !excludeIntensive &&
+				!controller.config.isInproxyMustUpgrade() &&
 				controller.establishInproxyForceSelectionCount > 0 &&
 				controller.protocolSelectionConstraints.supportedProtocols(
 					controller.establishConnectTunnelCount,
