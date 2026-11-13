@@ -1034,7 +1034,7 @@ func dialTunnel(
 			// quic.Dial closes packetConn on its network dial
 			// failures but not on its early validation errors,
 			// which would otherwise leak the conn and, for
-			// in-proxy, its broker client lease.
+			// in-proxy, the broker client it holds.
 			_ = packetConn.Close()
 			return nil, errors.Trace(err)
 		}
@@ -1791,8 +1791,8 @@ func (dialParams *DialParameters) getInproxyConn() *inproxyBrokerOwnedConn {
 	return conn
 }
 
-// releaseInproxyBrokerClient releases the broker client lease held by the
-// in-proxy connection, if any.
+// releaseInproxyBrokerClient releases the broker client held by the in-proxy
+// connection, if any.
 func (dialParams *DialParameters) releaseInproxyBrokerClient() {
 	if conn := dialParams.getInproxyConn(); conn != nil {
 		conn.release()
@@ -1800,14 +1800,14 @@ func (dialParams *DialParameters) releaseInproxyBrokerClient() {
 }
 
 // inproxyBrokerOwnedConn pairs an in-proxy connection with the broker client
-// lease acquired for it, so the lease is released when the connection closes
-// or activation ends, whichever comes first. release is idempotent.
+// acquired for it, so the broker client is released when the connection
+// closes or activation ends, whichever comes first. release is idempotent.
 type inproxyBrokerOwnedConn struct {
 	*inproxy.ClientConn
 	release func()
 }
 
-// Close closes the connection and releases the broker client lease.
+// Close closes the connection and releases the broker client.
 func (conn *inproxyBrokerOwnedConn) Close() error {
 	err := conn.ClientConn.Close()
 	conn.release()

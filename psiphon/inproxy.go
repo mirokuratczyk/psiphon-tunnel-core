@@ -247,12 +247,13 @@ func (b *InproxyBrokerClientManager) brokerClientFailed(
 	// tried at the current broker selection. Unsharing it or closing it
 	// closes b.changed, waking GetBrokerClient calls blocked on either.
 	//
-	// TODO: close a failed proxy client immediately? Proxy leases are
-	// announcement long-polls, so at the default proxy client limit of 1 a
-	// failed shared client blocks acquisition of a replacement until its last
-	// long-poll returns, up to InproxyProxyAnnounceRequestTimeout. Client
-	// leases, by contrast, are short offers or broker/server relays that
-	// should not be interrupted.
+	// TODO: close a failed proxy client immediately? A proxy uses its broker
+	// client for announcement long-polls, so at the default proxy client
+	// limit of 1 a failed shared client blocks acquisition of a replacement
+	// until its last long-poll returns, up to
+	// InproxyProxyAnnounceRequestTimeout. A client, by contrast, uses its
+	// broker client for short offers or broker/server relays that should not
+	// be interrupted.
 	wasShared := b.sharedClient == instance
 	if wasShared {
 		b.stopSharedIdleTimerLocked()
@@ -389,8 +390,8 @@ func (b *InproxyBrokerClientManager) brokerClientPrivateKey() (inproxy.SessionPr
 
 // waitLocked returns the channel broker client acquisition waits on in the
 // event the max number of broker clients has been reached with no shared
-// client or the search space of the current selection is exhausted. The
-// caller must hold b.mutex.
+// client, or every fronting provider at the current broker has been tried.
+// The caller must hold b.mutex.
 func (b *InproxyBrokerClientManager) waitLocked(reasonFormat string, args ...any) <-chan struct{} {
 	// Log once per stall rather than once per waiter.
 	if b.changed == nil {
@@ -720,7 +721,7 @@ func inproxyBrokerSupportsProvider(broker *parameters.InproxyBrokerSpec, provide
 //     broker and meet at one of them. Replay is considered only at the
 //     selected broker.
 //   - Common pairing proxies follow the selector's own stable order, but may
-//     start a visit at a broker with eligible replay.
+//     select a broker with eligible replay out of order.
 //   - A personal pairing client advances immediately on NoMatch failover, even
 //     while other broker clients are still held by callers. Proxies never fail
 //     over on NoMatch: they keep announcing at the same broker so that a
@@ -1919,7 +1920,7 @@ func (b *InproxyBrokerClientInstance) BrokerClientRoundTripperSucceeded(roundTri
 	// That duration is replayUpdateFrequency, measured from lastStoreReplay,
 	// which each broker client tracks separately. A newly constructed broker
 	// client therefore writes on its first success, persisting a proven
-	// configuration; with several broker clients racing, that is at most one
+	// configuration; with several broker clients in use, that is at most one
 	// write per broker client, after which each is limited by its own
 	// lastStoreReplay. The replay record is per broker, not per fronting
 	// provider, so any broker client's success may replace it; see
@@ -2145,10 +2146,10 @@ type InproxyBrokerDialParameters struct {
 	// brokerClientID identifies the InproxyBrokerClientInstance that
 	// supplied this copy; see GetBrokerClient. Only used for diagnostics.
 	brokerClientID string `json:"-"`
-	// candidateNumber is the creation ordinal of the broker client within
-	// its InproxyBrokerClientManager's count, which restarts at each
-	// takeBrokerClientCounts call. A shared client reused after a restart
-	// keeps the ordinal it was created with.
+	// candidateNumber numbers the broker clients of an
+	// InproxyBrokerClientManager in the order created. The count restarts
+	// at each takeBrokerClientCounts call. A shared client reused after a
+	// restart keeps the number it was created with.
 	candidateNumber int `json:"-"`
 	// acquireDuration is the time the caller spent in GetBrokerClient,
 	// including any wait and constructing a new broker client.
@@ -2398,8 +2399,8 @@ func (brokerDialParams *InproxyBrokerDialParameters) prepareDialConfigs(
 
 // GetMetricsForBrokerRequests returns broker client dial parameter log
 // fields to be reported to a broker. candidateNumber is the broker client's
-// creation ordinal, held by InproxyBrokerClientInstance rather than by the
-// dial parameters it was constructed with.
+// number in the order created, held by InproxyBrokerClientInstance rather
+// than by the dial parameters it was constructed with.
 func (brokerDialParams *InproxyBrokerDialParameters) GetMetricsForBrokerRequests(
 	candidateNumber int) common.LogFields {
 
@@ -2413,7 +2414,7 @@ func (brokerDialParams *InproxyBrokerDialParameters) GetMetricsForBrokerRequests
 
 	// The broker sees every candidate's requests, including candidates
 	// whose tunnels never reach a server, so it also receives the replay
-	// flag and candidate ordinal otherwise reported only in the winning
+	// flag and candidate number otherwise reported only in the winning
 	// tunnel's handshake; see GetMetrics.
 	isReplay := "0"
 	if brokerDialParams.isReplay {
@@ -2451,10 +2452,11 @@ func (brokerDialParams *InproxyBrokerDialParameters) GetMetrics() common.LogFiel
 
 	// Broker client selection diagnostics. Handshake metrics reach the
 	// server only for the winning tunnel; this field identifies which
-	// broker client it used. candidate_number is an ordinal, not bounded by
-	// InproxyClientMaxBrokerClients or InproxyProxyMaxBrokerClients, since
-	// broker clients close and new ones are created within an establishment;
-	// see InproxyBrokerDialParameters for when the count restarts.
+	// broker client it used. candidate_number counts broker clients created,
+	// so it is not bounded by InproxyClientMaxBrokerClients or
+	// InproxyProxyMaxBrokerClients: broker clients close and new ones are
+	// created within an establishment. See InproxyBrokerDialParameters for
+	// when the count restarts.
 	logFields["inproxy_broker_candidate_number"] = strconv.Itoa(brokerDialParams.candidateNumber)
 
 	logFields["inproxy_dial_broker_client_acquire_duration"] = strconv.FormatInt(
