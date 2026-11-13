@@ -4005,9 +4005,19 @@ loop:
 				break loop
 			}
 
-			NoticeInfo("failed to connect to %s: %v",
-				candidateServerEntry.serverEntry.GetDiagnosticID(),
-				errors.Trace(err))
+			// The in-proxy broker client ID is logged here rather than added
+			// to the error, as the error is also sent to the server in the
+			// failed tunnel stat.
+			if brokerDialParams := dialParams.inproxyBrokerDialParameters.Load(); brokerDialParams != nil {
+				NoticeInfo("failed to connect to %s: broker client %s: %v",
+					candidateServerEntry.serverEntry.GetDiagnosticID(),
+					brokerDialParams.brokerClientID,
+					errors.Trace(err))
+			} else {
+				NoticeInfo("failed to connect to %s: %v",
+					candidateServerEntry.serverEntry.GetDiagnosticID(),
+					errors.Trace(err))
+			}
 
 			continue
 		}

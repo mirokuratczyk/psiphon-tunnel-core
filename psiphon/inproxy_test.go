@@ -3423,8 +3423,9 @@ func TestInproxyBrokerCapacityTacticsWake(t *testing.T) {
 // TestInproxyDialLocalFailureCleanup verifies that a dialInproxy failure
 // after broker acquisition but before any broker request releases the lease:
 // a fresh candidate is closed, a shared client keeps its other lease, the
-// broker dial parameters remain recorded for metrics, and the error names
-// the broker client.
+// broker dial parameters remain recorded for metrics, and the error, which
+// is sent to the server in the failed tunnel stat, omits the broker client
+// ID.
 func TestInproxyDialLocalFailureCleanup(t *testing.T) {
 	for _, shared := range []bool{false, true} {
 		t.Run(fmt.Sprint(shared), func(t *testing.T) {
@@ -3454,8 +3455,9 @@ func TestInproxyDialLocalFailureCleanup(t *testing.T) {
 				t.Fatal("local failure disturbed shared lease")
 			}
 			brokerClientID := params.inproxyBrokerDialParameters.Load().brokerClientID
-			if !strings.Contains(err.Error(), "broker client "+brokerClientID) {
-				t.Fatalf("error does not name broker client %s: %v", brokerClientID, err)
+			if strings.Contains(err.Error(), "broker client") ||
+				strings.Contains(err.Error(), brokerClientID) {
+				t.Fatalf("error names broker client %s: %v", brokerClientID, err)
 			}
 		})
 	}

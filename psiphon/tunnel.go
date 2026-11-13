@@ -1741,12 +1741,9 @@ func dialInproxy(
 		return nil, &inproxyBrokerAcquireFailedError{err: errors.Trace(err)}
 	}
 	// On success, release the broker client when activation ends or the
-	// returned connection closes. On failure, release it here and name the
-	// broker client in the error, which the establishment worker logs.
+	// returned connection closes. On failure, release it here.
 	defer func() {
 		if retConn == nil {
-			retErr = errors.TraceMsg(
-				retErr, "broker client "+brokerDialParams.brokerClientID)
 			release()
 		}
 	}()
