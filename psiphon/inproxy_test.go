@@ -345,6 +345,8 @@ func runInproxyBrokerDialParametersTest(t *testing.T) error {
 
 	_ = brokerDialParams.GetMetrics()
 
+	release()
+
 	return nil
 }
 
@@ -3350,7 +3352,7 @@ func TestInproxyBrokerTotalClientLimit(t *testing.T) {
 	if a.roundTripper.runCtx.Err() == nil {
 		t.Fatal("draining client not closed on last release")
 	}
-	c = getGateTestClient(t, m, &releaseC)
+	_ = getGateTestClient(t, m, &releaseC)
 	if instance, _, changed, err := m.tryGetClientBrokerClient("TEST"); err != nil || instance != nil || changed == nil {
 		t.Fatal("remaining lease not counted against M")
 	}

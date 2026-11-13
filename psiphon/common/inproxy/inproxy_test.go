@@ -1453,26 +1453,6 @@ func (q *quicEchoServer) Run() {
 	}
 }
 
-// proxyAcquisitionTestRoundTripper is a RoundTripper over a real
-// ResponderSessions that records announce delays and dispatches decrypted
-// payloads to a test handler.
-type proxyAcquisitionTestRoundTripper struct {
-	sessions *ResponderSessions
-	handle   func([]byte) ([]byte, error)
-	delays   []time.Duration
-}
-
-func (r *proxyAcquisitionTestRoundTripper) RoundTrip(ctx context.Context, delay, _ time.Duration, packet []byte) ([]byte, error) {
-	if delay > 0 {
-		r.delays = append(r.delays, delay)
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	return r.sessions.HandlePacket(packet, func(_ ID, payload []byte) ([]byte, error) { return r.handle(payload) })
-}
-func (*proxyAcquisitionTestRoundTripper) Close() error { return nil }
-
 // TestProxyWorkerBrokerAcquisition verifies that one proxy announcement
 // worker acquires exactly one broker client and releases it on every exit:
 // a shared precheck, a NoMatch announcement, a local error before any request,

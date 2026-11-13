@@ -246,6 +246,13 @@ func (b *InproxyBrokerClientManager) brokerClientFailed(
 	// still counts toward the client limit and toward the fronting providers
 	// tried at the current broker selection. Unsharing it or closing it
 	// closes b.changed, waking GetBrokerClient calls blocked on either.
+	//
+	// TODO: close a failed proxy client immediately? Proxy leases are
+	// announcement long-polls, so at the default proxy client limit of 1 a
+	// failed shared client blocks acquisition of a replacement until its last
+	// long-poll returns, up to InproxyProxyAnnounceRequestTimeout. Client
+	// leases, by contrast, are short offers or broker/server relays that
+	// should not be interrupted.
 	wasShared := b.sharedClient == instance
 	if wasShared {
 		b.stopSharedIdleTimerLocked()
@@ -1071,6 +1078,9 @@ func (s *inproxyBrokerSelector) selectClient(config *Config, p parameters.Parame
 				// first so that a single-broker order, where
 				// every advance both leaves and arrives, never
 				// marks the proxy as away.
+				//
+				// TODO: jitter the return period, drawn once
+				// per departure?
 				switch {
 				case (visit.index+1)%len(s.brokers) == 0:
 					s.awayFromHomeSince = time.Time{}
